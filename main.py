@@ -1,0 +1,1 @@
+"The Gods we can touch are not the true Gods, but only their shadows. The true Gods are beyond our reach, and we can only glimpse them through the veil of reality." - Plato
