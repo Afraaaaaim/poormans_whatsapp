@@ -687,12 +687,13 @@ wheels = [
 
 [[package]]
 name = "poormans-whatsapp"
-version = "0.1.0"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "black" },
     { name = "fastapi" },
     { name = "isort" },
+    { name = "python-dotenv" },
     { name = "ruff" },
     { name = "whatsapp-python" },
 ]
@@ -707,6 +708,7 @@ requires-dist = [
     { name = "black", specifier = ">=26.1.0" },
     { name = "fastapi", specifier = ">=0.134.0" },
     { name = "isort", specifier = ">=8.0.0" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "ruff", specifier = ">=0.15.4" },
     { name = "whatsapp-python", specifier = ">=4.3.0" },
 ]
