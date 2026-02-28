@@ -1,0 +1,95 @@
+# docker-compose.yml
+# ──────────────────────────────────────────────
+# Services:
+#   redis          — message broker
+#   app            — FastAPI / uvicorn
+#   celery_worker  — executes tasks queued by Beat
+#   celery_beat    — fires the nightly schedule
+#
+# LOGS:
+#   All containers bind-mount ./logs on your HOST machine to /app/logs
+#   inside the container. This means:
+#     - Logs survive docker compose down, container crashes, rebuilds, anything
+#     - You can read/tail logs directly on the host: tail -f ./logs/app.log
+#     - Point Promtail/Filebeat at ./logs/app.json on the host for Grafana/Kibana
+#     - Archives land in ./logs/archive/ on the host — permanent, browsable
+#
+# Usage:
+#   docker compose up --build          # start everything
+#   docker compose down                # stop — logs/archive untouched on host
+#   docker compose logs -f app         # tail container stdout
+# ──────────────────────────────────────────────
+
+services:
+
+  # ── Redis broker ──────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI app ───────────────────────────────
+  app:
+    build: .
+    restart: unless-stopped
+    command: uv run uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8081:8000"
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # Bind mount: ./logs on host ↔ /app/logs in container
+      # The folder is created automatically by Docker if it doesn't exist.
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Celery worker ─────────────────────────────
+  celery_worker:
+    build: .
+    restart: unless-stopped
+    command: >
+      uv run celery -A once.celery_app worker
+      --loglevel=info
+      --concurrency=1
+      --queues=celery
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # Same host folder — worker must reach the log files to archive them
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Celery Beat scheduler ─────────────────────
+  celery_beat:
+    build: .
+    restart: unless-stopped
+    command: >
+      uv run celery -A once.celery_app beat
+      --loglevel=info
+      --scheduler celery.beat.PersistentScheduler
+      --schedule /app/logs/celerybeat-schedule
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # Beat writes its schedule state file here — persists across restarts
+      # so it won't double-fire if Beat container is restarted
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    # ── CRITICAL: never run more than one Beat container ──
+    # Scale celery_worker freely, never celery_beat.
