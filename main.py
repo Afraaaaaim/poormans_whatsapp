@@ -1,14 +1,22 @@
 # main.py
 
+import json as _json
 import os
 import sys
 
 import uvicorn
-from fastapi import FastAPI
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+load_dotenv(".env", override=True)
+
 from whatsapp import AsyncWhatsApp, get_mobile
 
-from once.helper_functions import check_number_authorized
 from once.logger import get_logger, set_request_context
+from once.once import handle_inbound_message, handle_status_update
+from once.redis_service import RedisService
+from once.utils import normalize_phone
 
 # =========================
 # Load Environment
@@ -24,7 +32,7 @@ PORT = int(os.getenv("PORT", 8000))
 
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+BA_PHONE_NUMBER = os.getenv("BA_PHONE_NUMBER")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 CUSTOM_ENDPOINT = os.getenv("CUSTOM_ENDPOINT")
 
@@ -39,7 +47,7 @@ UPDATE_CHECK = os.getenv("UPDATE_CHECK")
 MANDATORY_VARS = {
     "WHATSAPP_ACCESS_TOKEN": WHATSAPP_ACCESS_TOKEN,
     "WHATSAPP_VERIFY_TOKEN": WHATSAPP_VERIFY_TOKEN,
-    "PHONE_NUMBER": PHONE_NUMBER,
+    "BA_PHONE_NUMBER": BA_PHONE_NUMBER,
     "PHONE_NUMBER_ID": PHONE_NUMBER_ID,
     "CUSTOM_ENDPOINT": CUSTOM_ENDPOINT,
 }
@@ -62,13 +70,15 @@ LOGGER = to_bool(LOGGER)
 DEBUG = to_bool(DEBUG)
 UPDATE_CHECK = to_bool(UPDATE_CHECK)
 
+# ── Webhook handlers — no logic here, just extract + hand off ─────────────────
+
 # =========================
 # App Initialization
 # =========================
 try:
     wa = AsyncWhatsApp(
         token=WHATSAPP_ACCESS_TOKEN,
-        phone_number_id={PHONE_NUMBER: PHONE_NUMBER_ID},
+        phone_number_id={BA_PHONE_NUMBER: PHONE_NUMBER_ID},
         verify_token=WHATSAPP_VERIFY_TOKEN,
         logger=LOGGER,
         debug=DEBUG,
@@ -88,15 +98,114 @@ except Exception as e:
     sys.exit(1)
 
 
+# Remove on_event — it fires on every message and we don't need it
+@wa.on_event
+async def on_event(message):
+    pass  # intentionally empty — status updates handled below
+
+
+# Intercept the library's app with middleware
+@wa.app.middleware("http")
+async def intercept_status_updates(request: Request, call_next):
+    if request.method == "POST":
+        # Read body once, stash it so the original route can still read it
+        body = await request.body()
+        try:
+            data = _json.loads(body)
+            changed = data.get("entry", [{}])[0].get("changes", [{}])[0].get("field")
+            if changed == "messages":
+                statuses = (
+                    data.get("entry", [{}])[0]
+                    .get("changes", [{}])[0]
+                    .get("value", {})
+                    .get("statuses", [])
+                )
+                if statuses:
+                    set_request_context()
+                    for status_obj in statuses:
+                        waba_message_id = status_obj.get("id")
+                        status_value = status_obj.get("status")
+                        if not waba_message_id or not status_value:
+                            continue
+
+                        # Dedup status updates too — key includes status so sent/delivered/read all register
+                        dedup_key = f"{waba_message_id}:{status_value}"
+                        if await RedisService.is_duplicate_message(dedup_key, ttl=3600):
+                            logger.debug(
+                                "Duplicate status %s:%s — discarding",
+                                waba_message_id,
+                                status_value,
+                            )
+                            continue
+
+                        logger.debug(
+                            "Status update: %s → %s", waba_message_id, status_value
+                        )
+                        await handle_status_update(waba_message_id, status_value)
+                    return JSONResponse({"success": True})
+        except Exception:
+            logger.exception("intercept_status_updates: failed to parse body")
+
+        # Reconstruct the request with the body we already consumed
+        async def receive():
+            return {"type": "http.request", "body": body}
+
+        request._receive = receive
+
+    return await call_next(request)
+
+
 @wa.on_message
 async def on_message(message):
-    set_request_context()  # Start a new trace for this message
-    logger.info("Received message")
-    message.to = get_mobile(message.data)
-    if message.to is None or message.to == "":
-        logger.error("Failed to extract mobile number from message data")
+    set_request_context()
+
+    waba_message_id = getattr(message, "id", None)
+
+    # Dedup via Redis — atomic, persistent, TTL-bounded
+    if waba_message_id and await RedisService.is_duplicate_message(waba_message_id):
+        logger.debug("Duplicate message %s — discarding", waba_message_id)
         return
-    await check_number_authorized(message.to)
+
+    from_number = get_mobile(message.data)
+    if not from_number:
+        logger.error("Could not extract phone number from message data")
+        return
+
+    # Discard messages sent by the bot itself — Meta echoes our outbound messages back
+    owner_phone = normalize_phone(os.getenv("BA_PHONE_NUMBER", ""))
+    if from_number == owner_phone:
+        logger.debug("Ignoring echo of own message from %s", from_number)
+        return
+
+    logger.info("Inbound message received")
+    logger.debug(
+        "RAW WEBHOOK: wamid=%s body=%s timestamp=%s",
+        getattr(message, "id", None),
+        getattr(message, "content", None),
+        message.data.get("entry", [{}])[0]
+        .get("changes", [{}])[0]
+        .get("value", {})
+        .get("messages", [{}])[0]
+        .get("timestamp"),
+    )
+    msg_type = getattr(message, "type", "text")
+    body = getattr(message, "content", None) or getattr(message, "body", None)
+    reply_to_waba_id = None
+    logger.debug("Extracted body: %r type: %s", body, msg_type)
+
+    context = getattr(message, "context", None)
+    if context:
+        reply_to_waba_id = getattr(context, "id", None)
+
+    await handle_inbound_message(
+        wa=wa,
+        from_number=from_number,
+        waba_message_id=waba_message_id,
+        msg_type=msg_type,
+        body=body,
+        reply_to_waba_id=reply_to_waba_id,
+        raw_metadata=message.data if hasattr(message, "data") else {},
+    )
 
 
 # =========================

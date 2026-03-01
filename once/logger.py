@@ -257,8 +257,7 @@ def archive_logs() -> None:
     # Timezone driven by LOG_ROTATE_TZ env var — same setting used by Celery Beat.
     tz_name = os.getenv("LOG_ROTATE_TZ", "Asia/Kolkata")
     try:
-        from zoneinfo import \
-            ZoneInfo  # Python 3.9+, present in the Docker image
+        from zoneinfo import ZoneInfo  # Python 3.9+, present in the Docker image
 
         tz = ZoneInfo(tz_name)
     except Exception:
@@ -315,6 +314,11 @@ def archive_logs() -> None:
 _SETUP_DONE = False
 
 
+class _ExcludeSitePackagesFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return ".venv" not in record.pathname and "site-packages" not in record.pathname
+
+
 def _setup_root_logger() -> None:
     global _SETUP_DONE
     if _SETUP_DONE:
@@ -332,6 +336,8 @@ def _setup_root_logger() -> None:
     console = logging.StreamHandler(sys.stdout)
     console.setLevel(getattr(logging, log_level, logging.DEBUG))
     console.setFormatter(RichFormatter(use_json=False, use_color=use_color))
+    console.addFilter(_ExcludeSitePackagesFilter())
+
     root.addHandler(console)
 
     _LOG_DIR.mkdir(exist_ok=True)
