@@ -20,7 +20,7 @@ Flow for an inbound text message:
 Delivery status updates (from Meta webhooks):
     handle_status_update() — updates message status in DB
 """
-
+import asyncio
 from once.db_services import DBService
 from once.llm_services import LLMService
 from once.logger import get_logger, new_span
@@ -77,8 +77,8 @@ async def handle_inbound_message(
         sender_type = "human_owner" if user and user.is_owner else "human_user"
 
     # ── 4. SAVE INBOUND MESSAGE TO DB ─────────────────────────────────────────
-    with new_span("db.save_inbound"):
-        await DBService.save_message(
+    asyncio.create_task(
+        DBService.save_message(
             conversation_id=conversation.id,
             direction="inbound",
             msg_type=msg_type,
@@ -90,7 +90,8 @@ async def handle_inbound_message(
             is_llm_generated=False,
             sender_type=sender_type,
         )
-        log.info("Saved inbound message from %s", from_number)
+    )
+    log.debug("Inbound DB write dispatched to background for %s", from_number)
 
     # ── 5. ONLY RESPOND TO TEXT MESSAGES ─────────────────────────────────────
     if msg_type != "text" or not body:
@@ -125,26 +126,41 @@ async def handle_inbound_message(
         # Refresh TTL so active users never expire mid-conversation
         await RedisService.refresh_history_ttl(from_number)
 
-    # ── 9. SEND REPLY VIA WHATSAPP ────────────────────────────────────────────
-    with new_span("wa.send"):
-        waba_reply_id = await _send_whatsapp_reply(wa, from_number, reply_text)
-
-    # ── 10. SAVE OUTBOUND MESSAGE TO DB ───────────────────────────────────────
-    with new_span("db.save_outbound"):
+        
+        # ── 9. RESOLVE OWNER (needed for outbound DB row) ─────────────────────────
         owner = await DBService.get_owner()
-        await DBService.save_message(
-            conversation_id=conversation.id,
-            direction="outbound",
-            msg_type="text",
-            body=reply_text,
-            sender_id=owner.id if owner else None,
-            waba_message_id=waba_reply_id,
-            reply_to_waba_id=waba_message_id,
-            metadata={},
-            is_llm_generated=True,
-            sender_type="llm",
-        )
-        log.success("Saved outbound LLM reply")
+
+        # ── 10. SEND REPLY VIA WHATSAPP ───────────────────────────────────────────
+        # Outbound DB write MUST happen before send — Meta fires "sent" status
+        # webhook almost instantly, and the row must exist for it to land on.
+        with new_span("db.save_outbound"):
+            # We don't have waba_reply_id yet — save with None first, update after send
+            outbound_msg = await DBService.save_message(
+                conversation_id=conversation.id,
+                direction="outbound",
+                msg_type="text",
+                body=reply_text,
+                sender_id=owner.id if owner else None,
+                waba_message_id=None,          # not known yet
+                reply_to_waba_id=waba_message_id,
+                metadata={},
+                is_llm_generated=True,
+                sender_type="llm",
+            )
+
+        with new_span("wa.send"):
+            waba_reply_id = await _send_whatsapp_reply(wa, from_number, reply_text)
+
+        # ── 11. PATCH waba_message_id ONTO THE OUTBOUND ROW ──────────────────────
+        # Now that Meta gave us the wamid, stamp it so status webhooks can find the row.
+        if waba_reply_id and outbound_msg:
+            asyncio.create_task(
+                DBService.update_message_waba_id(outbound_msg.id, waba_reply_id)
+            )
+            log.debug("Outbound waba_id patch dispatched to background")
+
+        log.success("Reply sent to %s", from_number)
+
 
 
 async def handle_status_update(waba_message_id: str, status: str) -> None:

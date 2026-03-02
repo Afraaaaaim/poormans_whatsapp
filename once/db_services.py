@@ -352,3 +352,15 @@ class DBService:
                 await session.flush()
                 log.success("Bulk saved %d messages", len(rows))
                 return len(rows)
+
+    @staticmethod
+    async def update_message_waba_id(message_id: uuid.UUID, waba_message_id: str) -> None:
+        """Stamp the Meta wamid onto an outbound row after send."""
+        async with _session() as session:
+            result = await session.execute(
+                select(MessageModel).where(MessageModel.id == message_id)
+            )
+            msg = result.scalar_one_or_none()
+            if msg:
+                msg.waba_message_id = waba_message_id
+                log.debug("Patched waba_id=%s onto message id=%s", waba_message_id, message_id)

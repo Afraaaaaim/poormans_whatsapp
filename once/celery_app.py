@@ -25,7 +25,6 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 LOG_ROTATE_TZ = os.getenv("LOG_ROTATE_TZ", "Asia/Kolkata")
 LOG_ROTATE_HOUR = int(os.getenv("LOG_ROTATE_HOUR", "0"))
 LOG_ROTATE_MIN = int(os.getenv("LOG_ROTATE_MIN", "1"))
-HISTORY_FLUSH_EVERY = int(os.getenv("HISTORY_FLUSH_EVERY", "30"))  # minutes
 
 celery_app = Celery(
     "poormans_whatsapp",
@@ -52,12 +51,6 @@ celery_app.conf.update(
             "task": "once.tasks.rotate_logs",
             "schedule": crontab(hour=LOG_ROTATE_HOUR, minute=LOG_ROTATE_MIN),
             "options": {"expires": 3600},
-        },
-        "flush-llm-history": {
-            "task": "once.tasks.flush_llm_history",
-            # Every N minutes — controlled by HISTORY_FLUSH_EVERY env var
-            "schedule": crontab(minute=f"*/{HISTORY_FLUSH_EVERY}"),
-            "options": {"expires": HISTORY_FLUSH_EVERY * 60},
         },
     },
 )
