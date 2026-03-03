@@ -8,6 +8,7 @@ import os
 import asyncio
 from once.llm_services import LLMService
 from once.logger import get_logger, new_span
+from once.messages import REJECTION_MESSAGES
 from once.helper_functions import (
     resolve_sender,
     load_history,
@@ -18,25 +19,6 @@ from once.helper_functions import (
     dispatch_waba_id_patch,
     send_whatsapp_reply,
 )
-ADMIN_DISPLAY_NAME = os.getenv("ADMIN_DISPLAY_NAME","Admin")
-
-_REJECTION_MESSAGES = {
-    "not_found": (
-        "👋 *Hey there!*\n\n"
-        "It looks like you don't have access to this assistant yet.\n\n"
-        f"📩 Reach out to *{ADMIN_DISPLAY_NAME}* to get added!"
-    ),
-    "inactive": (
-        "😴 *Your account is currently inactive.*\n\n"
-        "Looks like your access has been paused for now.\n\n"
-        "📩 Drop a message to the admin and they'll get you sorted!"
-    ),
-    "deleted": (
-        "💔 *Your account has been removed.*\n\n"
-        "It seems your access has been revoked.\n\n"
-        "📩 If you think this is a mistake, contact the admin."
-    ),
-}
 
 log = get_logger(__name__)
 
@@ -54,7 +36,7 @@ async def handle_inbound_message(
     # ── 1. AUTH + RESOLVE ─────────────────────────────────────────────────────
     user, conversation, reason = await resolve_sender(from_number,wa)
     if not user:
-        await send_whatsapp_reply(wa, from_number, _REJECTION_MESSAGES.get(reason, "Access denied."))
+        await send_whatsapp_reply(wa, from_number, REJECTION_MESSAGES.get(reason, "Access denied."))
         return
 
     sender_type,sender_id = "human_owner" if user.is_owner else "human_user" , user.id
