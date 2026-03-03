@@ -1,0 +1,43 @@
+name: Deploy to Cathedral
+
+on:
+  push:
+    branches:
+      - deployment
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy on server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PATH: ${{ secrets.SERVER_PATH }}
+        run: |
+          ssh ${SERVER_USER}@${SERVER_HOST} << EOF
+            set -e
+            cd ${SERVER_PATH}
+
+            # Pull latest deployment branch
+            git fetch origin
+            git checkout deployment
+            git pull origin deployment
+
+            # Rebuild and restart containers
+            docker compose up -d --build --force-recreate
+
+            # Optional cleanup
+            docker image prune -f
+          EOF
