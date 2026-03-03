@@ -95,7 +95,8 @@ class _CachedMessage:
 
 async def resolve_sender(from_number: str):
     """
-    Returns (user, conversation) or (None, None) if unauthorized.
+    Returns (user, conversation, None) on success.
+    Returns (None, None, reason) on failure.
     Redis-first when USE_REDIS_CACHE=true.
     """
     if USE_REDIS_CACHE:
@@ -105,11 +106,8 @@ async def resolve_sender(from_number: str):
 
 async def _resolve_sender_db(from_number: str):
     with new_span("resolve_all"):
-        user, conversation = await asyncio.gather(
-            DBService.get_user_by_phone(from_number),
-            DBService.get_or_create_conversation(from_number, user.id),
-        )
-        
+        user = await DBService.get_user_by_phone(from_number)
+
         if not user:
             return None, None, "not_found"
         if not user.is_active:
@@ -117,23 +115,15 @@ async def _resolve_sender_db(from_number: str):
         if user.deleted_at is not None:
             return None, None, "deleted"
 
-        if not conversation:
-            log.error("Default 'PA' conversation not found — was the DB seeded?")
-            return None, None
-
+        conversation = await DBService.get_or_create_conversation(from_number, user.id)
         log.debug("Auth ok for %s | conversation=%s", from_number, conversation.id)
-
-        if not conversation.waba_chat_id:
-            log.debug("First message — linking waba_chat_id for conversation %s", conversation.id)
-            await DBService.set_conversation_waba_id(conversation.id, from_number)
-
-        return user, conversation
+        return user, conversation, None
 
 
 async def _resolve_sender_cached(from_number: str):
     with new_span("resolve_all.cached"):
         user_key = f"user:{from_number}"
-        conv_key = "conversation:default"
+        conv_key = f"conversation:{from_number}"
 
         raw_user, raw_conv = await asyncio.gather(
             RedisService.cache_get(user_key),
@@ -159,21 +149,15 @@ async def _resolve_sender_cached(from_number: str):
 
         # ── Conversation ──
         if raw_conv:
-            log.debug("Cache hit: conversation:default")
+            log.debug("Cache hit: conversation %s", from_number)
             conversation = _CachedConversation(json.loads(raw_conv))
         else:
-            log.debug("Cache miss: conversation:default — fetching from DB", )
+            log.debug("Cache miss: conversation %s — fetching from DB", from_number)
             conversation = await DBService.get_or_create_conversation(from_number, user.id)
-            if not conversation:
-                log.error("Default 'PA' conversation not found — was the DB seeded?")
-                return None, None
             await RedisService.cache_set(conv_key, _serialize_conversation(conversation), ttl=_CONV_CACHE_TTL)
-            if not conversation.waba_chat_id:
-                log.debug("First message — linking waba_chat_id for conversation %s", conversation.id)
-                await DBService.set_conversation_waba_id(conversation.id, from_number)
 
         log.debug("Auth ok for %s | conversation=%s", from_number, conversation.id)
-        return user, conversation
+        return user, conversation, None
 
 
 # ── History ───────────────────────────────────────────────────────────────────
