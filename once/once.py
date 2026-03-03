@@ -1,38 +1,10 @@
-"""
-once.py — Central orchestrator
-================================
-Location: once/once.py
-
-All services meet here. main.py hands off every inbound webhook and
-once.py decides what to do.
-
-Flow for an inbound text message:
-    1. Auth check              — is this phone allowed?
-    2. Resolve conversation    — find default PA conversation
-    3. Load history            — from Redis via RedisService
-    4. Save inbound msg to DB  — via DBService
-    5. Build message list      — history + new user message
-    6. LLM call                — via LLMService (pure I/O)
-    7. Save reply to history   — back to Redis via RedisService
-    8. Send reply via WA       — via the wa client
-    9. Save outbound msg to DB — via DBService
-
-Delivery status updates (from Meta webhooks):
-    handle_status_update() — updates message status in DB
-"""
-import asyncio
-from once.db_services import DBService
-from once.llm_services import LLMService
-from once.logger import get_logger, new_span
-from once.redis_service import RedisService
-from datetime import datetime
-log = get_logger(__name__)
 
 """
 once.py — Orchestrator
 ======================
 Thin coordinator only. All logic lives in helper_function.py and services.
 """
+import os
 import asyncio
 from once.llm_services import LLMService
 from once.logger import get_logger, new_span
@@ -46,6 +18,25 @@ from once.helper_functions import (
     dispatch_waba_id_patch,
     send_whatsapp_reply,
 )
+ADMIN_DISPLAY_NAME = os.getenv("ADMIN_DISPLAY_NAME","Admin")
+
+_REJECTION_MESSAGES = {
+    "not_found": (
+        "👋 *Hey there!*\n\n"
+        "It looks like you don't have access to this assistant yet.\n\n"
+        f"📩 Reach out to *{ADMIN_DISPLAY_NAME}* to get added!"
+    ),
+    "inactive": (
+        "😴 *Your account is currently inactive.*\n\n"
+        "Looks like your access has been paused for now.\n\n"
+        "📩 Drop a message to the admin and they'll get you sorted!"
+    ),
+    "deleted": (
+        "💔 *Your account has been removed.*\n\n"
+        "It seems your access has been revoked.\n\n"
+        "📩 If you think this is a mistake, contact the admin."
+    ),
+}
 
 log = get_logger(__name__)
 
@@ -61,8 +52,9 @@ async def handle_inbound_message(
 ) -> None:
 
     # ── 1. AUTH + RESOLVE ─────────────────────────────────────────────────────
-    user, conversation = await resolve_sender(from_number)
-    if not user or not conversation:
+    user, conversation, reason = await resolve_sender(from_number,wa)
+    if not user:
+        await send_whatsapp_reply(wa, from_number, _REJECTION_MESSAGES.get(reason, "Access denied."))
         return
 
     sender_type,sender_id = "human_owner" if user.is_owner else "human_user" , user.id

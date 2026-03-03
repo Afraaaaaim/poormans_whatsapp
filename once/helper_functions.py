@@ -107,12 +107,15 @@ async def _resolve_sender_db(from_number: str):
     with new_span("resolve_all"):
         user, conversation = await asyncio.gather(
             DBService.get_user_by_phone(from_number),
-            DBService.get_default_conversation(),
+            DBService.get_or_create_conversation(from_number, user.id),
         )
-
-        if not user or not user.is_active or user.deleted_at is not None:
-            log.warning("Unauthorized message from %s — ignoring", from_number)
-            return None, None
+        
+        if not user:
+            return None, None, "not_found"
+        if not user.is_active:
+            return None, None, "inactive"
+        if user.deleted_at is not None:
+            return None, None, "deleted"
 
         if not conversation:
             log.error("Default 'PA' conversation not found — was the DB seeded?")
@@ -147,9 +150,12 @@ async def _resolve_sender_cached(from_number: str):
             if user:
                 await RedisService.cache_set(user_key, _serialize_user(user), ttl=_USER_CACHE_TTL)
 
-        if not user or not user.is_active or user.deleted_at is not None:
-            log.warning("Unauthorized message from %s — ignoring", from_number)
-            return None, None
+        if not user:
+            return None, None, "not_found"
+        if not user.is_active:
+            return None, None, "inactive"
+        if user.deleted_at is not None:
+            return None, None, "deleted"
 
         # ── Conversation ──
         if raw_conv:
@@ -157,7 +163,7 @@ async def _resolve_sender_cached(from_number: str):
             conversation = _CachedConversation(json.loads(raw_conv))
         else:
             log.debug("Cache miss: conversation:default — fetching from DB", )
-            conversation = await DBService.get_default_conversation()
+            conversation = await DBService.get_or_create_conversation(from_number, user.id)
             if not conversation:
                 log.error("Default 'PA' conversation not found — was the DB seeded?")
                 return None, None
@@ -307,14 +313,19 @@ def dispatch_waba_id_patch(outbound_msg, waba_reply_id: str) -> None:
 
 
 async def _patch_waba_id_redis(msg_id: str, waba_reply_id: str) -> None:
-    raw = await _client.get(f"msg:{msg_id}")
-    if raw:
-        msg_data = json.loads(raw)
-        msg_data["waba_message_id"] = waba_reply_id
-        await _client.set(f"msg:{msg_id}", json.dumps(msg_data), ex=_MSG_CACHE_TTL)
-        await _client.set(f"msg:waba:{waba_reply_id}", msg_id, ex=_MSG_CACHE_TTL)
-    await _client.rpush(_Q_WABA, json.dumps({"msg_id": msg_id, "waba_message_id": waba_reply_id}))
+    async with _client.pipeline(transaction=True) as pipe:
+        await pipe.get(f"msg:{msg_id}")
+        results = await pipe.execute()
+        raw = results[0]
+        if raw:
+            msg_data = json.loads(raw)
+            msg_data["waba_message_id"] = waba_reply_id
+            await pipe.set(f"msg:{msg_id}", json.dumps(msg_data), ex=_MSG_CACHE_TTL)
+            await pipe.set(f"msg:waba:{waba_reply_id}", msg_id, ex=_MSG_CACHE_TTL)
+        await pipe.rpush(_Q_WABA, json.dumps({"msg_id": msg_id, "waba_message_id": waba_reply_id}))
+        await pipe.execute()
     log.debug("Waba ID patched in Redis: msg=%s wamid=%s", msg_id, waba_reply_id)
+
 
 
 # ── Status update ─────────────────────────────────────────────────────────────
@@ -332,29 +343,34 @@ async def handle_status_update_cached(waba_message_id: str, status: str) -> bool
 
 async def _update_status_redis(waba_message_id: str, status: str) -> bool:
     msg_id = await _client.get(f"msg:waba:{waba_message_id}")
-    if msg_id:
-        raw = await _client.get(f"msg:{msg_id}")
-        if raw:
-            msg_data = json.loads(raw)
-            msg_data["status"] = status
-            now = datetime.now(timezone.utc).isoformat()
-            if status == "sent":
-                msg_data["sent_at"] = now
-            elif status == "delivered":
-                msg_data["delivered_at"] = now
-            elif status == "read":
-                msg_data["read_at"] = now
-            await _client.set(f"msg:{msg_id}", json.dumps(msg_data), ex=_MSG_CACHE_TTL)
-    else:
-        log.debug("Status update: Redis miss for waba_id=%s — queuing for DB", waba_message_id)
 
-    await _client.rpush(_Q_STATUS, json.dumps({
-        "waba_message_id": waba_message_id,
-        "status": status,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }))
+    async with _client.pipeline(transaction=True) as pipe:
+        if msg_id:
+            await pipe.get(f"msg:{msg_id}")
+            results = await pipe.execute()
+            raw = results[0]
+            if raw:
+                msg_data = json.loads(raw)
+                msg_data["status"] = status
+                now = datetime.now(timezone.utc).isoformat()
+                if status == "sent":
+                    msg_data["sent_at"] = now
+                elif status == "delivered":
+                    msg_data["delivered_at"] = now
+                elif status == "read":
+                    msg_data["read_at"] = now
+                await pipe.set(f"msg:{msg_id}", json.dumps(msg_data), ex=_MSG_CACHE_TTL)
+        else:
+            log.debug("Status update: Redis miss for waba_id=%s — queuing for DB", waba_message_id)
+
+        await pipe.rpush(_Q_STATUS, json.dumps({
+            "waba_message_id": waba_message_id,
+            "status": status,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        await pipe.execute()
+
     return msg_id is not None
-
 
 # ── Owner cache ───────────────────────────────────────────────────────────────
 

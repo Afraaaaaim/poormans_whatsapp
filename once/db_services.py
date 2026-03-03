@@ -23,7 +23,7 @@ from typing import AsyncGenerator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from once.db.models import ConversationModel, MessageModel, UserModel
+from once.db.models import ConversationModel, ConversationParticipantModel, MessageModel, UserModel
 from once.db.session import AsyncSessionLocal
 from once.logger import get_logger, new_span
 from once.utils import normalize_phone
@@ -364,3 +364,47 @@ class DBService:
             if msg:
                 msg.waba_message_id = waba_message_id
                 log.debug("Patched waba_id=%s onto message id=%s", waba_message_id, message_id)
+
+    @staticmethod
+    async def get_or_create_conversation(from_number: str, user_id: uuid.UUID) -> ConversationModel:
+        """
+        Get existing conversation for this phone number or create a new one.
+        Also creates a ConversationParticipantModel row on first creation.
+        """
+        with new_span("db.get_or_create_conversation"):
+            normalized = normalize_phone(from_number)
+            async with _session() as session:
+                # Try to find existing conversation for this phone
+                result = await session.execute(
+                    select(ConversationModel).where(
+                        ConversationModel.waba_chat_id == normalized,
+                        ConversationModel.deleted_at.is_(None),
+                    )
+                )
+                conversation = result.scalar_one_or_none()
+
+                if conversation:
+                    log.debug("Found existing conversation for %s id=%s", normalized, conversation.id)
+                    return conversation
+
+                # Create new conversation + participant
+                log.debug("Creating new conversation for %s", normalized)
+                conversation = ConversationModel(
+                    id=uuid.uuid4(),
+                    waba_chat_id=normalized,
+                    is_group=False,
+                )
+                session.add(conversation)
+                await session.flush()  # get conversation.id before participant insert
+
+                participant = ConversationParticipantModel(
+                    id=uuid.uuid4(),
+                    conversation_id=conversation.id,
+                    user_id=user_id,
+                    is_admin=False,
+                )
+                session.add(participant)
+                await session.flush()
+
+                log.success("Created conversation id=%s for %s", conversation.id, normalized)
+                return conversation
