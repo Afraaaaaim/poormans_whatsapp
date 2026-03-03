@@ -34,7 +34,7 @@ async def handle_inbound_message(
 ) -> None:
 
     # ── 1. AUTH + RESOLVE ─────────────────────────────────────────────────────
-    user, conversation, reason = await resolve_sender(from_number,wa)
+    user, conversation, reason = await resolve_sender(from_number)
     if not user:
         await send_whatsapp_reply(wa, from_number, REJECTION_MESSAGES.get(reason, "Access denied."))
         return
