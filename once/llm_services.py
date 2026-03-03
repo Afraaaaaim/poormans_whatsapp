@@ -58,7 +58,7 @@ SYSTEM_PROMPT = os.getenv(
 # ── Clients — created once at import time ─────────────────────────────────────
 _cerebras = AsyncCerebras(
     api_key=CEREBRAS_API_KEY,
-    timeout=3,
+    timeout=5,
     max_retries=0,  # we handle retries via rotation, not per-client
     warm_tcp_connection=True,
 )
@@ -66,14 +66,14 @@ _cerebras = AsyncCerebras(
 _groq = AsyncOpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1",
-    timeout=3,
+    timeout=5,
     max_retries=0,
 )
 
 _openrouter = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1",
-    timeout=3,
+    timeout=5,
     max_retries=0,
 )
 
