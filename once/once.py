@@ -25,7 +25,7 @@ from once.db_services import DBService
 from once.llm_services import LLMService
 from once.logger import get_logger, new_span
 from once.redis_service import RedisService
-
+from datetime import datetime
 log = get_logger(__name__)
 
 
@@ -52,29 +52,34 @@ async def handle_inbound_message(
     """
 
     # ── 1. AUTH ───────────────────────────────────────────────────────────────
-    with new_span("auth"):
-        authorized = await DBService.is_authorized(from_number)
-        if not authorized:
+    # ── 1. PARALLEL: AUTH + CONVERSATION + USER ───────────────────────────────
+    with new_span("resolve_all"):
+        t0 = datetime.now()
+        user, conversation = await asyncio.gather(
+            DBService.get_user_by_phone(from_number),
+            DBService.get_default_conversation(),
+        )
+        elapsed = (datetime.now() - t0).total_seconds()
+        log.debug("Parallel DB resolve done in %.3fs", elapsed)
+
+        # Auth check from the already-fetched user (no extra DB call)
+        if not user or not user.is_active or user.deleted_at is not None:
             log.warning("Unauthorized message from %s — ignoring", from_number)
             return
-        log.debug("Authorized: %s", from_number)
 
-    # ── 2. RESOLVE CONVERSATION ───────────────────────────────────────────────
-    with new_span("resolve_conversation"):
-        conversation = await DBService.get_default_conversation()
         if not conversation:
             log.error("Default 'PA' conversation not found — was the DB seeded?")
             return
 
-        # Link Meta's sender phone as waba_chat_id on first message
+        log.debug("Auth ok for %s | conversation=%s", from_number, conversation.id)
+
         if not conversation.waba_chat_id:
+            log.debug("First message — linking waba_chat_id for conversation %s", conversation.id)
             await DBService.set_conversation_waba_id(conversation.id, from_number)
 
-    # ── 3. RESOLVE SENDER ─────────────────────────────────────────────────────
-    with new_span("resolve_user"):
-        user = await DBService.get_user_by_phone(from_number)
-        sender_id = user.id if user else None
-        sender_type = "human_owner" if user and user.is_owner else "human_user"
+        sender_id = user.id
+        sender_type = "human_owner" if user.is_owner else "human_user"
+        log.debug("Sender resolved: id=%s type=%s", sender_id, sender_type)
 
     # ── 4. SAVE INBOUND MESSAGE TO DB ─────────────────────────────────────────
     asyncio.create_task(
