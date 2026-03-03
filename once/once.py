@@ -10,6 +10,7 @@ from once.llm_services import LLMService
 from once.logger import get_logger, new_span
 from once.messages import REJECTION_MESSAGES
 from once.helper_functions import (
+    handle_status_update_cached,
     resolve_sender,
     load_history,
     save_history,
@@ -93,8 +94,7 @@ async def handle_status_update(waba_message_id: str, status: str) -> None:
     """Update message delivery status in DB."""
     with new_span("db.status_update"):
         log.debug("Status update: %s → %s", waba_message_id, status)
-        from once.db_services import DBService
-        updated = await DBService.update_message_status(waba_message_id, status)
+        updated = await handle_status_update_cached(waba_message_id, status)
         if updated:
             log.success("Status updated: %s → %s", waba_message_id, status)
         else:
