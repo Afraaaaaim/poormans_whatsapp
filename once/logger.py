@@ -356,7 +356,7 @@ def _setup_root_logger() -> None:
             root, _LOG_DIR / "errors.log", logging.WARNING, use_json=False
         )
 
-    for noisy in ("httpx", "httpcore", "urllib3", "asyncio"):
+    for noisy in ("httpx", "httpcore", "urllib3", "asyncio", "hpack", "cerebras.cloud.sdk", "celery.utils.functional"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
@@ -371,6 +371,7 @@ def _add_file_handler(
     )
     handler.setLevel(level)
     handler.setFormatter(RichFormatter(use_json=use_json, use_color=False))
+    handler.addFilter(_ExcludeSitePackagesFilter())  # ← add this line
     root.addHandler(handler)
 
 
