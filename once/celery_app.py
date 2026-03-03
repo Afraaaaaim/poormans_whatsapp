@@ -52,5 +52,11 @@ celery_app.conf.update(
             "schedule": crontab(hour=LOG_ROTATE_HOUR, minute=LOG_ROTATE_MIN),
             "options": {"expires": 3600},
         },
+        "flush-db-queue": {
+            "task": "once.tasks.flush_db_queue",
+            "schedule": 30.0,  # every 30 seconds
+            "options": {"expires": 25},
+        },
     },
+    
 )

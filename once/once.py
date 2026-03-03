@@ -28,6 +28,27 @@ from once.redis_service import RedisService
 from datetime import datetime
 log = get_logger(__name__)
 
+"""
+once.py — Orchestrator
+======================
+Thin coordinator only. All logic lives in helper_function.py and services.
+"""
+import asyncio
+from once.llm_services import LLMService
+from once.logger import get_logger, new_span
+from once.helper_functions import (
+    resolve_sender,
+    load_history,
+    save_history,
+    dispatch_inbound_save,
+    get_owner_cached,
+    save_outbound_message,
+    dispatch_waba_id_patch,
+    send_whatsapp_reply,
+)
+
+log = get_logger(__name__)
+
 
 async def handle_inbound_message(
     wa,
@@ -38,169 +59,69 @@ async def handle_inbound_message(
     reply_to_waba_id: str | None = None,
     raw_metadata: dict | None = None,
 ) -> None:
-    """
-    Entry point for every inbound WhatsApp message.
-    Called by main.py's @wa.on_message handler.
 
-    wa               — AsyncWhatsApp client (needed to send replies)
-    from_number      — E.164 phone of the sender
-    waba_message_id  — Meta's wamid.xxx for this message
-    msg_type         — 'text', 'image', 'audio', etc.
-    body             — text content (None for media-only messages)
-    reply_to_waba_id — wamid of quoted message if replying
-    raw_metadata     — full raw webhook payload for audit
-    """
+    # ── 1. AUTH + RESOLVE ─────────────────────────────────────────────────────
+    user, conversation = await resolve_sender(from_number)
+    if not user or not conversation:
+        return
 
-    # ── 1. AUTH ───────────────────────────────────────────────────────────────
-    # ── 1. PARALLEL: AUTH + CONVERSATION + USER ───────────────────────────────
-    with new_span("resolve_all"):
-        t0 = datetime.now()
-        user, conversation = await asyncio.gather(
-            DBService.get_user_by_phone(from_number),
-            DBService.get_default_conversation(),
-        )
-        elapsed = (datetime.now() - t0).total_seconds()
-        log.debug("Parallel DB resolve done in %.3fs", elapsed)
+    sender_type,sender_id = "human_owner" if user.is_owner else "human_user" , user.id
 
-        # Auth check from the already-fetched user (no extra DB call)
-        if not user or not user.is_active or user.deleted_at is not None:
-            log.warning("Unauthorized message from %s — ignoring", from_number)
-            return
-
-        if not conversation:
-            log.error("Default 'PA' conversation not found — was the DB seeded?")
-            return
-
-        log.debug("Auth ok for %s | conversation=%s", from_number, conversation.id)
-
-        if not conversation.waba_chat_id:
-            log.debug("First message — linking waba_chat_id for conversation %s", conversation.id)
-            await DBService.set_conversation_waba_id(conversation.id, from_number)
-
-        sender_id = user.id
-        sender_type = "human_owner" if user.is_owner else "human_user"
-        log.debug("Sender resolved: id=%s type=%s", sender_id, sender_type)
-
-    # ── 4. SAVE INBOUND MESSAGE TO DB ─────────────────────────────────────────
-    asyncio.create_task(
-        DBService.save_message(
-            conversation_id=conversation.id,
-            direction="inbound",
-            msg_type=msg_type,
-            body=body,
-            sender_id=sender_id,
-            waba_message_id=waba_message_id,
-            reply_to_waba_id=reply_to_waba_id,
-            metadata=raw_metadata or {},
-            is_llm_generated=False,
-            sender_type=sender_type,
-        )
+    # ── 2. SAVE INBOUND (background) ──────────────────────────────────────────
+    dispatch_inbound_save(
+        conversation_id=conversation.id,
+        msg_type=msg_type,
+        body=body,
+        sender_id=sender_id,
+        sender_type=sender_type,
+        waba_message_id=waba_message_id,
+        reply_to_waba_id=reply_to_waba_id,
+        raw_metadata=raw_metadata or {},
     )
-    log.debug("Inbound DB write dispatched to background for %s", from_number)
 
-    # ── 5. ONLY RESPOND TO TEXT MESSAGES ─────────────────────────────────────
+    # ── 3. TEXT ONLY ──────────────────────────────────────────────────────────
     if msg_type != "text" or not body:
         log.info("Non-text message (type=%s) — skipping LLM", msg_type)
         return
 
-    # ── 6. LOAD HISTORY + BUILD MESSAGE LIST ──────────────────────────────────
-    with new_span("redis.load_history"):
-        history = await RedisService.get_history(from_number)
-        log.debug("Loaded %d history entries for %s", len(history), from_number)
-
-    # Append the new user message to build the full context for the LLM
+    # ── 4. LOAD HISTORY + LLM ─────────────────────────────────────────────────
+    history = await load_history(from_number)
     messages_for_llm = history + [{"role": "user", "content": body}]
 
-    # ── 7. LLM CALL ───────────────────────────────────────────────────────────
     try:
         reply_text = await LLMService.chat(messages=messages_for_llm)
     except Exception:
         log.exception("LLM call failed for %s", from_number)
-        await _send_whatsapp_reply(
-            wa, from_number, "⚠️ Something went wrong. Try again."
-        )
+        await send_whatsapp_reply(wa, from_number, "⚠️ Something went wrong. Try again.")
         return
 
-    # ── 8. SAVE UPDATED HISTORY TO REDIS ─────────────────────────────────────
-    with new_span("redis.save_history"):
-        updated_history = history + [
-            {"role": "user", "content": body},
-            {"role": "assistant", "content": reply_text},
-        ]
-        await RedisService.save_history(from_number, updated_history)
-        # Refresh TTL so active users never expire mid-conversation
-        await RedisService.refresh_history_ttl(from_number)
+    # ── 5. SAVE HISTORY + FETCH OWNER (parallel) ─────────────────────────────
+    _, owner = await asyncio.gather(
+        save_history(from_number, history, body, reply_text),
+        get_owner_cached(),
+    )
 
-        
-        # ── 9. RESOLVE OWNER (needed for outbound DB row) ─────────────────────────
-        owner = await DBService.get_owner()
+    # ── 6. SAVE OUTBOUND + SEND ───────────────────────────────────────────────
+    outbound_msg = await save_outbound_message(
+        conversation_id=conversation.id,
+        reply_text=reply_text,
+        sender_id=owner.id if owner else None,
+        waba_message_id=waba_message_id,
+    )
 
-        # ── 10. SEND REPLY VIA WHATSAPP ───────────────────────────────────────────
-        # Outbound DB write MUST happen before send — Meta fires "sent" status
-        # webhook almost instantly, and the row must exist for it to land on.
-        with new_span("db.save_outbound"):
-            # We don't have waba_reply_id yet — save with None first, update after send
-            outbound_msg = await DBService.save_message(
-                conversation_id=conversation.id,
-                direction="outbound",
-                msg_type="text",
-                body=reply_text,
-                sender_id=owner.id if owner else None,
-                waba_message_id=None,          # not known yet
-                reply_to_waba_id=waba_message_id,
-                metadata={},
-                is_llm_generated=True,
-                sender_type="llm",
-            )
+    waba_reply_id = await send_whatsapp_reply(wa, from_number, reply_text)
+    dispatch_waba_id_patch(outbound_msg, waba_reply_id)
 
-        with new_span("wa.send"):
-            waba_reply_id = await _send_whatsapp_reply(wa, from_number, reply_text)
-
-        # ── 11. PATCH waba_message_id ONTO THE OUTBOUND ROW ──────────────────────
-        # Now that Meta gave us the wamid, stamp it so status webhooks can find the row.
-        if waba_reply_id and outbound_msg:
-            asyncio.create_task(
-                DBService.update_message_waba_id(outbound_msg.id, waba_reply_id)
-            )
-            log.debug("Outbound waba_id patch dispatched to background")
-
-        log.success("Reply sent to %s", from_number)
-
+    log.success("Reply sent to %s", from_number)
 
 
 async def handle_status_update(waba_message_id: str, status: str) -> None:
-    """
-    Called when Meta sends a delivery receipt webhook.
-    Updates message status (sent → delivered → read) in DB.
-    """
+    """Update message delivery status in DB."""
     with new_span("db.status_update"):
         log.debug("Status update: %s → %s", waba_message_id, status)
+        from once.db_services import DBService
         updated = await DBService.update_message_status(waba_message_id, status)
         if updated:
             log.success("Status updated: %s → %s", waba_message_id, status)
         else:
             log.warning("Status update: message not found waba_id=%s", waba_message_id)
-
-
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
-
-async def _send_whatsapp_reply(wa, to_number: str, text: str) -> str | None:
-    """Send a WhatsApp text message. Returns the wamid or None on failure."""
-    try:
-        message = wa.create_message(to=to_number, content=text)
-        future = await message.send()
-        response = await future  # send() returns a Future, await it for the actual JSON
-
-        # Meta API response format: {"messages": [{"id": "wamid.xxx"}]}
-        wamid = None
-        if isinstance(response, dict):
-            messages = response.get("messages", [])
-            if messages:
-                wamid = messages[0].get("id")
-
-        log.success("WA message sent to %s wamid=%s", to_number, wamid)
-        return wamid
-    except Exception as e:
-        log.exception("Failed to send WA message to %s: %s", to_number, e)
-        return None
