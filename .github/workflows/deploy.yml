@@ -26,7 +26,7 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_PATH: ${{ secrets.SERVER_PATH }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} << EOF
+          ssh ${SERVER_USER}@${SERVER_HOST} << EOF
             set -e
             cd ${SERVER_PATH}
 
