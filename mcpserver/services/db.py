@@ -1,21 +1,17 @@
 """
-mcp/services/db.py
+mcpserver/services/db.py
 
-Adapter layer — MCP tools import DB helpers from here.
-Wraps DBService static methods + implements missing ones
-(get_user_by_id, list_users, create_user, update_user_role, delete_user).
+DB adapter for MCP tools.
+Only exposes what is needed: list users (for number-based lookup),
+create, deactivate, and reactivate.
 
-Phone numbers: stored digits-only (normalize_phone strips +), consistent
-with existing data. The E.164 DB constraint should be updated to reflect this.
-
-TODO: migrate the new methods into once/db_services.py DBService when stable.
+Phone numbers are stored digits-only (normalize_phone strips the leading +).
 """
 
 from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
 
 from sqlalchemy import select
@@ -27,7 +23,7 @@ from once.db_services import DBService
 from once.utils import normalize_phone
 
 
-# ── Session helper ────────────────────────────────────────────────────────────
+# ── session helper ────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def _session() -> AsyncGenerator[AsyncSession, None]:
@@ -40,43 +36,29 @@ async def _session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-# ── Pass-through wrappers for existing DBService methods ─────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 async def db_get_user_by_phone(phone: str) -> Any | None:
+    """Pass-through to existing DBService."""
     return await DBService.get_user_by_phone(phone)
 
 
-async def db_is_authorized(phone: str) -> bool:
-    return await DBService.is_authorized(phone)
-
-
-# ── New methods (not yet in DBService) ───────────────────────────────────────
-# TODO: migrate these into once/db_services.py when stable.
-
-async def db_get_user_by_id(user_id: int | uuid.UUID) -> Any | None:
-    """Fetch a user by primary key."""
+async def db_list_all_users() -> list[Any]:
+    """
+    Return ALL non-deleted users ordered by created_at ascending.
+    This stable order is what we assign 1-based list numbers to.
+    """
     async with _session() as session:
         result = await session.execute(
-            select(UserModel).where(
-                UserModel.id == user_id,
-                UserModel.deleted_at.is_(None),
-            )
+            select(UserModel)
+            .where(UserModel.deleted_at.is_(None))
+            .order_by(UserModel.created_at.asc())
         )
-        return result.scalar_one_or_none()
-
-
-async def db_list_users(role_filter: str | None = None) -> list[Any]:
-    """Return all non-deleted users, optionally filtered by role."""
-    async with _session() as session:
-        q = select(UserModel).where(UserModel.deleted_at.is_(None))
-        if role_filter:
-            q = q.where(UserModel.role == role_filter)
-        result = await session.execute(q.order_by(UserModel.id))
         return list(result.scalars().all())
 
 
 async def db_create_user(phone: str, name: str, role: str) -> Any:
-    """Insert a new user row. Phone stored as digits-only (normalize_phone strips +)."""
+    """Insert a new user. Phone stored digits-only."""
     async with _session() as session:
         normalized = normalize_phone(phone)
         user = UserModel(
@@ -92,8 +74,11 @@ async def db_create_user(phone: str, name: str, role: str) -> Any:
         return user
 
 
-async def db_update_user_role(phone: str, new_role: str) -> Any | None:
-    """Update a user's role. Returns updated user or None if not found."""
+async def db_set_active(phone: str, active: bool) -> Any | None:
+    """
+    Set is_active on a user identified by normalized phone.
+    Returns the updated user, or None if not found.
+    """
     async with _session() as session:
         normalized = normalize_phone(phone)
         result = await session.execute(
@@ -105,25 +90,6 @@ async def db_update_user_role(phone: str, new_role: str) -> Any | None:
         user = result.scalar_one_or_none()
         if user is None:
             return None
-        user.role = new_role
-        user.is_owner = (new_role == "owner")
+        user.is_active = active
         await session.flush()
         return user
-
-
-async def db_delete_user(phone: str) -> bool:
-    """Soft-delete by phone. Returns True if found, False if not."""
-    async with _session() as session:
-        normalized = normalize_phone(phone)
-        result = await session.execute(
-            select(UserModel).where(
-                UserModel.phone == normalized,
-                UserModel.deleted_at.is_(None),
-            )
-        )
-        user = result.scalar_one_or_none()
-        if user is None:
-            return False
-        user.deleted_at = datetime.now(timezone.utc)
-        await session.flush()
-        return True

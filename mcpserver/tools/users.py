@@ -1,9 +1,13 @@
 """
-MCP tools — users category.
+mcpserver/tools/users.py
 
-All tools here are registered in _registry.py.
-Permission checks are enforced by the MCP server before dispatch.
-DB access goes through once.db_services (re-exported from mcp/services/db.py).
+Three tools:
+  - add_user
+  - deactivate_user
+  - reactivate_user
+
+Users are identified by phone number (preferred) or display name (fallback).
+All errors returned as {"ok": False, "error": "..."} — nothing raises to the LLM.
 """
 
 from __future__ import annotations
@@ -12,23 +16,21 @@ import logging
 from typing import Any
 
 from mcpserver.services.db import (
+    db_list_all_users,
     db_get_user_by_phone,
-    db_get_user_by_id,
-    db_list_users,
     db_create_user,
-    db_update_user_role,
-    db_delete_user,
+    db_set_active,
 )
 
 log = logging.getLogger(__name__)
 
+VALID_ROLES = {"owner", "admin", "user", "guest"}
 
-# ── helpers ───────────────────────────────────────────────────────────────────
 
-def _user_row(u: Any) -> dict:
-    """Serialise a DB user row to a plain dict."""
+# ── serializer ────────────────────────────────────────────────────────────────
+
+def _row(u: Any) -> dict:
     return {
-        "id": str(u.id),
         "phone": u.phone,
         "display_name": u.display_name,
         "role": u.role,
@@ -37,128 +39,153 @@ def _user_row(u: Any) -> dict:
     }
 
 
+# ── lookup helper ─────────────────────────────────────────────────────────────
+
+async def _resolve_user(
+    phone: str | None,
+    name: str | None,
+) -> tuple[Any | None, str | None]:
+    """
+    Resolve a user by phone (preferred) or display name (fallback).
+
+    Returns:
+        (user_object, error_message)
+        error_message is None on success.
+    """
+    if phone:
+        user = await db_get_user_by_phone(phone)
+        if user is None:
+            return None, f"No user found with phone number {phone}."
+        return user, None
+
+    if name:
+        all_users = await db_list_all_users()
+        name_lower = name.strip().lower()
+        matches = [u for u in all_users if u.display_name.strip().lower() == name_lower]
+
+        if not matches:
+            return None, f"No user found with the name '{name}'."
+        if len(matches) > 1:
+            numbers = ", ".join(u.phone for u in matches)
+            return None, (
+                f"Multiple users share the name '{name}' (phones: {numbers}). "
+                "Please specify by phone number instead."
+            )
+        return matches[0], None
+
+    return None, "Please provide either a phone number or a display name to identify the user."
+
+
 # ── tools ─────────────────────────────────────────────────────────────────────
 
-async def get_user(
+async def add_user(
     *,
     phone: str | None = None,
-    user_id: int | None = None,
+    name: str | None = None,
+    role: str | None = None,
 ) -> dict:
     """
-    Fetch a user by phone number OR user_id.
-    At least one of the two must be supplied.
-
-    Returns:
-        {"ok": True, "user": {...}} on success
-        {"ok": False, "error": "..."} on failure
+    Register a new user. phone, name, and role are all required.
+    Returns a clear message listing whatever is missing.
     """
-    if phone is None and user_id is None:
-        return {"ok": False, "error": "Provide either 'phone' or 'user_id'."}
+    missing = []
+    if not phone:
+        missing.append("phone")
+    if not name:
+        missing.append("name")
+    if not role:
+        missing.append("role")
 
-    try:
-        if phone:
-            user = await db_get_user_by_phone(phone)
-        else:
-            user = await db_get_user_by_id(user_id)
-
-        if user is None:
-            return {"ok": False, "error": "User not found."}
-        return {"ok": True, "user": _user_row(user)}
-    except Exception as exc:
-        log.exception("get_user failed")
-        return {"ok": False, "error": str(exc)}
-
-
-async def list_users(*, role_filter: str | None = None) -> dict:
-    """
-    List all users, optionally filtered by role.
-
-    Args:
-        role_filter: one of 'owner' | 'admin' | 'user' | 'guest' (optional)
-
-    Returns:
-        {"ok": True, "users": [...], "count": N}
-    """
-    try:
-        users = await db_list_users(role_filter=role_filter)
+    if missing:
+        field_list = ", ".join(f"'{f}'" for f in missing)
         return {
-            "ok": True,
-            "users": [_user_row(u) for u in users],
-            "count": len(users),
+            "ok": False,
+            "error": f"Cannot add user — missing required field(s): {field_list}. Please provide them.",
+            "missing_fields": missing,
         }
-    except Exception as exc:
-        log.exception("list_users failed")
-        return {"ok": False, "error": str(exc)}
 
-
-async def add_user(*, phone: str, name: str, role: str = "user") -> dict:
-    """
-    Register a new user.
-
-    Args:
-        phone: E.164 phone number e.g. +919876543210
-        name:  Display name
-        role:  'owner' | 'admin' | 'user' | 'guest'  (default: 'user')
-
-    Returns:
-        {"ok": True, "user": {...}} or {"ok": False, "error": "..."}
-    """
-    valid_roles = {"owner", "admin", "user", "guest"}
-    if role not in valid_roles:
-        return {"ok": False, "error": f"Invalid role '{role}'. Choose from {valid_roles}."}
+    if role not in VALID_ROLES:
+        return {
+            "ok": False,
+            "error": f"'{role}' is not a valid role. Choose one of: {', '.join(sorted(VALID_ROLES))}.",
+        }
 
     try:
         existing = await db_get_user_by_phone(phone)
         if existing:
-            return {"ok": False, "error": f"User with phone {phone} already exists."}
+            return {
+                "ok": False,
+                "error": (
+                    f"A user with phone {phone} already exists "
+                    f"(name: {existing.display_name}, role: {existing.role})."
+                ),
+            }
 
         user = await db_create_user(phone=phone, name=name, role=role)
-        return {"ok": True, "user": _user_row(user)}
+        return {"ok": True, "user": _row(user)}
+
     except Exception as exc:
         log.exception("add_user failed")
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": f"Database error while adding user: {exc}"}
 
 
-async def update_user_role(*, phone: str, new_role: str) -> dict:
+async def deactivate_user(
+    *,
+    phone: str | None = None,
+    name: str | None = None,
+) -> dict:
     """
-    Change a user's role.
-
-    Args:
-        phone:    E.164 phone number
-        new_role: 'owner' | 'admin' | 'user' | 'guest'
-
-    Returns:
-        {"ok": True, "user": {...}} or {"ok": False, "error": "..."}
-    """
-    valid_roles = {"owner", "admin", "user", "guest"}
-    if new_role not in valid_roles:
-        return {"ok": False, "error": f"Invalid role '{new_role}'. Choose from {valid_roles}."}
-
-    try:
-        user = await db_update_user_role(phone=phone, new_role=new_role)
-        if user is None:
-            return {"ok": False, "error": f"User with phone {phone} not found."}
-        return {"ok": True, "user": _user_row(user)}
-    except Exception as exc:
-        log.exception("update_user_role failed")
-        return {"ok": False, "error": str(exc)}
-
-
-async def remove_user(*, phone: str) -> dict:
-    """
-    Permanently delete a user.
-
-    Args:
-        phone: E.164 phone number
-
-    Returns:
-        {"ok": True, "deleted": phone} or {"ok": False, "error": "..."}
+    Deactivate a user (sets is_active=False).
+    Identify by phone (preferred) or display name (fallback).
     """
     try:
-        deleted = await db_delete_user(phone=phone)
-        if not deleted:
-            return {"ok": False, "error": f"User with phone {phone} not found."}
-        return {"ok": True, "deleted": phone}
+        user, err = await _resolve_user(phone, name)
+        if err:
+            return {"ok": False, "error": err}
+
+        if not user.is_active:
+            return {
+                "ok": False,
+                "error": f"{user.display_name} ({user.phone}) is already inactive. No changes made.",
+            }
+
+        updated = await db_set_active(user.phone, active=False)
+        if updated is None:
+            return {"ok": False, "error": "User disappeared during update — please try again."}
+
+        return {"ok": True, "user": _row(updated)}
+
     except Exception as exc:
-        log.exception("remove_user failed")
-        return {"ok": False, "error": str(exc)}
+        log.exception("deactivate_user failed")
+        return {"ok": False, "error": f"Database error while deactivating user: {exc}"}
+
+
+async def reactivate_user(
+    *,
+    phone: str | None = None,
+    name: str | None = None,
+) -> dict:
+    """
+    Reactivate a user (sets is_active=True).
+    Identify by phone (preferred) or display name (fallback).
+    """
+    try:
+        user, err = await _resolve_user(phone, name)
+        if err:
+            return {"ok": False, "error": err}
+
+        if user.is_active:
+            return {
+                "ok": False,
+                "error": f"{user.display_name} ({user.phone}) is already active. No changes made.",
+            }
+
+        updated = await db_set_active(user.phone, active=True)
+        if updated is None:
+            return {"ok": False, "error": "User disappeared during update — please try again."}
+
+        return {"ok": True, "user": _row(updated)}
+
+    except Exception as exc:
+        log.exception("reactivate_user failed")
+        return {"ok": False, "error": f"Database error while reactivating user: {exc}"}

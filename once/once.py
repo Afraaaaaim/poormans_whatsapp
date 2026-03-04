@@ -42,16 +42,6 @@ SYSTEM_PROMPT_WITH_HANDOFF = SYSTEM_PROMPT + (
 # Matches: ##AGENT::<reason>::<compressed_summary>##
 _HANDOFF_RE = re.compile(r"##AGENT::(.+?)::(.+?)##", re.DOTALL)
 
-# Injected into LLM1's system prompt to teach it the handoff signal.
-# Append this to whatever SYSTEM_PROMPT is set in llm_services.py.
-HANDOFF_INSTRUCTION = (
-    "\n\nIf the user's request requires taking an action (adding/removing users, "
-    "looking up data, making changes), do NOT answer directly. Instead, emit ONLY "
-    "this signal and nothing else:\n"
-    "##AGENT::<one-line reason for the action>::<compressed 1-2 sentence summary of the conversation so far>##\n"
-    "Do not add any other text when emitting this signal."
-)
-
 
 def _parse_handoff(reply: str) -> tuple[str, str] | None:
     """

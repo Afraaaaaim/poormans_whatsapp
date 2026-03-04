@@ -47,6 +47,9 @@ AGENT_SYSTEM_PROMPT = (
     "You have access to tools. Use them to complete the task. "
     "Always pass caller_role when a tool requires it. "
     "Be concise. Do not explain — act and return results."
+    "If a parameter is missing or not provided. prompt the user about it."
+    "Auto correct is fine but prompt the user with the possible right answer"
+    "Do not assume any empty values."
 )
 
 # ── OpenRouter client for the agent ──────────────────────────────────────────
