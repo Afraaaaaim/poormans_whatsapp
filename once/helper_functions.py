@@ -32,7 +32,7 @@ log = get_logger(__name__)
 
 USE_REDIS_CACHE = os.getenv("USE_REDIS_CACHE", "false").lower() == "true"
 
-_USER_CACHE_TTL = int(os.getenv("USER_CACHE_TTL_SECONDS", "300"))
+_USER_CACHE_TTL = int(os.getenv("USER_CACHE_TTL_SECONDS", "30"))
 _CONV_CACHE_TTL = int(os.getenv("CONV_CACHE_TTL_SECONDS", "3600"))
 _MSG_CACHE_TTL  = int(os.getenv("MSG_CACHE_TTL_SECONDS", "86400"))
 

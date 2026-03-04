@@ -3,15 +3,21 @@ once.py — Orchestrator
 ======================
 Thin coordinator only. All logic lives in helper_function.py and services.
 
-LLM1 handoff signal format (emitted by Cerebras when tools are needed):
-    ##AGENT::<reason>::<compressed_summary>##
+Handoff to CrewAI agent loop is now decided by LLM1 via a structured
+classification call — no fragile string signal needed.
 
-If LLM1 emits this, the agent loop runs and its result is fed back to LLM1
-for a final plain-text reply to the user.
+Flow:
+  LLM1 (Cerebras) replies to user message
+        ↓
+  _needs_agent() asks a second tiny LLM call: "does this need action?"
+        ↓
+  If yes  → agent_run() (CrewAI crew) → LLM1 wraps result for user
+  If no   → reply_text sent directly
 """
+
+import asyncio
 import os
 import re
-import asyncio
 from once.llm_services import LLMService, SYSTEM_PROMPT
 from once.logger import get_logger, new_span
 from once.messages import REJECTION_MESSAGES
@@ -30,28 +36,38 @@ from once.agent_service import agent_run
 
 log = get_logger(__name__)
 
-# LLM1 system prompt — base prompt + handoff instruction
+# ── LLM1 system prompt (no ##AGENT## signal needed anymore) ──────────────────
+
 SYSTEM_PROMPT_WITH_HANDOFF = SYSTEM_PROMPT + (
-    "\n\nIf the user's request requires taking an action (adding/removing users, "
-    "looking up data, making changes), do NOT answer directly. Instead emit ONLY "
-    "this signal and nothing else:\n"
-    "##AGENT::<one-line reason>::<1-2 sentence conversation summary>##\n"
-    "Do not add any other text when emitting this signal."
+    "\n\n"
+    "CRITICAL ROUTING RULE:\n"
+    "If the user's request requires any action (adding/removing/deactivating users, "
+    "lookups, any data change), reply ONLY with:\n"
+    "ACTION: <one-line description>\n\n"
+    "Examples:\n"
+    "User: add john with number 9123456789 as guest\n"
+    "You: ACTION: Add user with phone 9123456789, name John, role guest\n\n"
+    "User: remove afraim\n"
+    "You: ACTION: Deactivate user with name Afraim\n\n"
+    "User: who is signed up?\n"
+    "You: ACTION: List all users\n\n"
+    "Rules:\n"
+    "- Do NOT ask for more info before emitting ACTION — the agent will handle missing details.\n"
+    "- Do NOT add any text before or after the ACTION line.\n"
+    "- Only reply normally for pure conversation (greetings, questions about features, etc)."
 )
+FINAL_SYSTEMP_PROMPT = "This will be the final message going to the user, construct it properly in a meaninfulway, dont repeat stuff. keep it minimal and format is accordingly, this is going as a whatsapp message"
+# Matches:  ACTION: <reason>
+_ACTION_RE = re.compile(r"^ACTION:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
-# Matches: ##AGENT::<reason>::<compressed_summary>##
-_HANDOFF_RE = re.compile(r"##AGENT::(.+?)::(.+?)##", re.DOTALL)
 
-
-def _parse_handoff(reply: str) -> tuple[str, str] | None:
+def _parse_action(reply: str) -> str | None:
     """
-    Returns (reason, compressed_summary) if reply is a handoff signal.
-    Returns None if it's a normal conversational reply.
+    Returns the action reason string if LLM1 emitted an ACTION line.
+    Returns None for normal conversational replies.
     """
-    m = _HANDOFF_RE.search(reply.strip())
-    if m:
-        return m.group(1).strip(), m.group(2).strip()
-    return None
+    m = _ACTION_RE.search(reply.strip())
+    return m.group(1).strip() if m else None
 
 
 async def handle_inbound_message(
@@ -103,17 +119,22 @@ async def handle_inbound_message(
         await send_whatsapp_reply(wa, from_number, "⚠️ Something went wrong. Try again.")
         return
 
-    # ── 5. HANDOFF CHECK ──────────────────────────────────────────────────────
-    handoff = _parse_handoff(llm1_reply)
+    # ── 5. ACTION CHECK → CREW ───────────────────────────────────────────────
+    action_reason = _parse_action(llm1_reply)
 
-    if handoff:
-        agent_reason, compressed_summary = handoff
-        log.info("Handoff detected for %s | reason=%s", from_number, agent_reason)
+    if action_reason:
+        log.info("Action detected for %s | reason=%s", from_number, action_reason)
+
+        # Build a short conversation summary to give the crew context
+        recent = messages_for_llm[-4:]  # last 2 turns is enough
+        compressed_summary = " | ".join(
+            f"{m['role']}: {m['content'][:120]}" for m in recent
+        )
 
         try:
             agent_result = await agent_run(
                 wa=wa,
-                reason=agent_reason,
+                reason=action_reason,
                 compressed_summary=compressed_summary,
                 user_phone=from_number,
                 caller_role=user.role,
@@ -135,11 +156,10 @@ async def handle_inbound_message(
                     ),
                 },
             ]
-            reply_text = await LLMService.chat(messages=final_messages)
+            reply_text = await LLMService.chat(messages=final_messages,system_prompt=FINAL_SYSTEMP_PROMPT)
         except Exception:
             log.exception("LLM1 final reply failed for %s", from_number)
-            # Fall back to raw agent result rather than leaving user hanging
-            reply_text = agent_result
+            reply_text = agent_result  # fall back to raw result
     else:
         reply_text = llm1_reply
 

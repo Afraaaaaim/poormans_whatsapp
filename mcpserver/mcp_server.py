@@ -86,12 +86,16 @@ async def deactivate_user(
     """
     Deactivate a user (sets is_active=False).
 
-    Identify by phone number (preferred) or display name (fallback).
+    Identify the user by EITHER:
+    - phone number (E.164, e.g. 919567288514), OR
+    - display name — a partial or approximate name is fine, the system
+      will fuzzy-match it. Do NOT ask the user for a phone number if
+      you already have a name.
 
     Args:
         caller_role: Role of the invoking user.
-        phone:       E.164 phone number.
-        name:        Display name (used only if phone is not provided).
+        phone:       E.164 phone number. Optional if name is provided.
+        name:        Display name. Optional if phone is provided.
     """
     _guard("deactivate_user", caller_role)
     return await user_tools.deactivate_user(phone=phone, name=name)
@@ -104,14 +108,18 @@ async def reactivate_user(
     name: str | None = None,
 ) -> dict:
     """
-    Reactivate a previously deactivated user (sets is_active=True).
+    Reactivate a user (sets is_active=True).
 
-    Identify by phone number (preferred) or display name (fallback).
+    Identify the user by EITHER:
+    - phone number (E.164, e.g. 919567288514), OR
+    - display name — a partial or approximate name is fine, the system
+      will fuzzy-match it. Do NOT ask the user for a phone number if
+      you already have a name.
 
     Args:
         caller_role: Role of the invoking user.
-        phone:       E.164 phone number.
-        name:        Display name (used only if phone is not provided).
+        phone:       E.164 phone number. Optional if name is provided.
+        name:        Display name. Optional if phone is provided.
     """
     _guard("reactivate_user", caller_role)
     return await user_tools.reactivate_user(phone=phone, name=name)

@@ -117,7 +117,7 @@ async def _call_cerebras(messages: list[dict]) -> str:
     completion = await _cerebras.chat.completions.create(
         model=CEREBRAS_MODEL,
         messages=messages,
-        max_completion_tokens=400,
+        max_completion_tokens=1000,
         temperature=0.7,
         stream=False,
     )
@@ -129,7 +129,7 @@ async def _call_openai_compat(client: AsyncOpenAI, model: str, messages: list[di
         model=model,
         messages=messages,
         stream=True,
-        max_completion_tokens=400,
+        max_completion_tokens=1000,
         temperature=0.7,
     )
     if is_openrouter:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from rapidfuzz import process, fuzz, utils
 
 from mcpserver.services.db import (
     db_list_all_users,
@@ -25,6 +26,7 @@ from mcpserver.services.db import (
 log = logging.getLogger(__name__)
 
 VALID_ROLES = {"owner", "admin", "user", "guest"}
+_FUZZY_THRESHOLD = 80
 
 
 # ── serializer ────────────────────────────────────────────────────────────────
@@ -48,6 +50,11 @@ async def _resolve_user(
     """
     Resolve a user by phone (preferred) or display name (fallback).
 
+    Name matching uses three-tier strategy:
+      1. Exact match (case-insensitive)
+      2. Fuzzy match via rapidfuzz WRatio >= 80  (handles typos, partial names)
+      3. Ambiguous → ask caller to clarify by phone
+
     Returns:
         (user_object, error_message)
         error_message is None on success.
@@ -60,18 +67,51 @@ async def _resolve_user(
 
     if name:
         all_users = await db_list_all_users()
-        name_lower = name.strip().lower()
-        matches = [u for u in all_users if u.display_name.strip().lower() == name_lower]
+        name_query = name.strip()
 
-        if not matches:
-            return None, f"No user found with the name '{name}'."
-        if len(matches) > 1:
-            numbers = ", ".join(u.phone for u in matches)
+        # ── Tier 1: exact match (case-insensitive) ────────────────────────────
+        exact = [
+            u for u in all_users
+            if u.display_name.strip().lower() == name_query.lower()
+        ]
+        if len(exact) == 1:
+            return exact[0], None
+        if len(exact) > 1:
+            numbers = ", ".join(u.phone for u in exact)
             return None, (
                 f"Multiple users share the name '{name}' (phones: {numbers}). "
                 "Please specify by phone number instead."
             )
-        return matches[0], None
+
+        # ── Tier 2: fuzzy match ───────────────────────────────────────────────
+        choices = {u.display_name.strip(): u for u in all_users}
+        fuzzy_hits = process.extract(
+            name_query,
+            choices.keys(),
+            scorer=fuzz.WRatio,
+            processor=utils.default_process,  # lowercases + strips punctuation
+            score_cutoff=_FUZZY_THRESHOLD,
+        )
+        # fuzzy_hits → list of (matched_name, score, key)
+        if not fuzzy_hits:
+            return None, (
+                f"No user found matching '{name}'. "
+                "Check the name or provide a phone number instead."
+            )
+
+        if len(fuzzy_hits) == 1:
+            matched_name, score, _ = fuzzy_hits[0]
+            return choices[matched_name], None
+
+        # ── Tier 3: multiple fuzzy hits → ask to clarify ──────────────────────
+        candidates = ", ".join(
+            f"{name!r} ({choices[name].phone})"
+            for name, _, _ in fuzzy_hits
+        )
+        return None, (
+            f"Found multiple possible matches for '{name}': {candidates}. "
+            "Please specify by phone number or use the exact name."
+        )
 
     return None, "Please provide either a phone number or a display name to identify the user."
 
