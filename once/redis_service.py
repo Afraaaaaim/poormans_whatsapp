@@ -123,7 +123,7 @@ class RedisService:
     # ── DEDUP ─────────────────────────────────────────────────────────────────
 
     @staticmethod
-    async def is_duplicate_message(waba_message_id: str, ttl: int = 86400) -> bool:
+    async def is_duplicate_message(waba_message_id: str, ttl: int = 691200) -> bool:
         key = f"dedup:{waba_message_id}"
         try:
             is_new = await _client.set(key, "1", ex=ttl, nx=True)

@@ -52,6 +52,7 @@ def _serialize_user(user) -> str:
         "phone": user.phone,
         "display_name": user.display_name,
         "is_owner": user.is_owner,
+        "role" : user.role,
         "is_active": user.is_active,
         "deleted_at": user.deleted_at.isoformat() if user.deleted_at else None,
     })
@@ -72,6 +73,7 @@ class _CachedUser:
         self.id = uuid.UUID(data["id"])
         self.phone = data["phone"]
         self.display_name = data["display_name"]
+        self.role = data["role"]
         self.is_owner = data["is_owner"]
         self.is_active = data["is_active"]
         self.deleted_at = data["deleted_at"]

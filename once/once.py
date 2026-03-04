@@ -1,12 +1,18 @@
-
 """
 once.py — Orchestrator
 ======================
 Thin coordinator only. All logic lives in helper_function.py and services.
+
+LLM1 handoff signal format (emitted by Cerebras when tools are needed):
+    ##AGENT::<reason>::<compressed_summary>##
+
+If LLM1 emits this, the agent loop runs and its result is fed back to LLM1
+for a final plain-text reply to the user.
 """
 import os
+import re
 import asyncio
-from once.llm_services import LLMService
+from once.llm_services import LLMService, SYSTEM_PROMPT
 from once.logger import get_logger, new_span
 from once.messages import REJECTION_MESSAGES
 from once.helper_functions import (
@@ -20,8 +26,42 @@ from once.helper_functions import (
     dispatch_waba_id_patch,
     send_whatsapp_reply,
 )
+from once.agent_service import agent_run
 
 log = get_logger(__name__)
+
+# LLM1 system prompt — base prompt + handoff instruction
+SYSTEM_PROMPT_WITH_HANDOFF = SYSTEM_PROMPT + (
+    "\n\nIf the user's request requires taking an action (adding/removing users, "
+    "looking up data, making changes), do NOT answer directly. Instead emit ONLY "
+    "this signal and nothing else:\n"
+    "##AGENT::<one-line reason>::<1-2 sentence conversation summary>##\n"
+    "Do not add any other text when emitting this signal."
+)
+
+# Matches: ##AGENT::<reason>::<compressed_summary>##
+_HANDOFF_RE = re.compile(r"##AGENT::(.+?)::(.+?)##", re.DOTALL)
+
+# Injected into LLM1's system prompt to teach it the handoff signal.
+# Append this to whatever SYSTEM_PROMPT is set in llm_services.py.
+HANDOFF_INSTRUCTION = (
+    "\n\nIf the user's request requires taking an action (adding/removing users, "
+    "looking up data, making changes), do NOT answer directly. Instead, emit ONLY "
+    "this signal and nothing else:\n"
+    "##AGENT::<one-line reason for the action>::<compressed 1-2 sentence summary of the conversation so far>##\n"
+    "Do not add any other text when emitting this signal."
+)
+
+
+def _parse_handoff(reply: str) -> tuple[str, str] | None:
+    """
+    Returns (reason, compressed_summary) if reply is a handoff signal.
+    Returns None if it's a normal conversational reply.
+    """
+    m = _HANDOFF_RE.search(reply.strip())
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return None
 
 
 async def handle_inbound_message(
@@ -40,7 +80,7 @@ async def handle_inbound_message(
         await send_whatsapp_reply(wa, from_number, REJECTION_MESSAGES.get(reason, "Access denied."))
         return
 
-    sender_type,sender_id = "human_owner" if user.is_owner else "human_user" , user.id
+    sender_type, sender_id = "human_owner" if user.is_owner else "human_user", user.id
 
     # ── 2. SAVE INBOUND (background) ──────────────────────────────────────────
     dispatch_inbound_save(
@@ -59,24 +99,67 @@ async def handle_inbound_message(
         log.info("Non-text message (type=%s) — skipping LLM", msg_type)
         return
 
-    # ── 4. LOAD HISTORY + LLM ─────────────────────────────────────────────────
+    # ── 4. LOAD HISTORY + LLM1 ───────────────────────────────────────────────
     history = await load_history(from_number)
     messages_for_llm = history + [{"role": "user", "content": body}]
 
     try:
-        reply_text = await LLMService.chat(messages=messages_for_llm)
+        llm1_reply = await LLMService.chat(
+            messages=messages_for_llm,
+            system_prompt=SYSTEM_PROMPT_WITH_HANDOFF,
+        )
     except Exception:
         log.exception("LLM call failed for %s", from_number)
         await send_whatsapp_reply(wa, from_number, "⚠️ Something went wrong. Try again.")
         return
 
-    # ── 5. SAVE HISTORY + FETCH OWNER (parallel) ─────────────────────────────
+    # ── 5. HANDOFF CHECK ──────────────────────────────────────────────────────
+    handoff = _parse_handoff(llm1_reply)
+
+    if handoff:
+        agent_reason, compressed_summary = handoff
+        log.info("Handoff detected for %s | reason=%s", from_number, agent_reason)
+
+        try:
+            agent_result = await agent_run(
+                wa=wa,
+                reason=agent_reason,
+                compressed_summary=compressed_summary,
+                user_phone=from_number,
+                caller_role=user.role,
+            )
+        except Exception:
+            log.exception("Agent loop failed for %s", from_number)
+            await send_whatsapp_reply(wa, from_number, "⚠️ Action failed. Try again.")
+            return
+
+        # Feed agent result back to LLM1 for a natural final reply
+        try:
+            final_messages = messages_for_llm + [
+                {"role": "assistant", "content": llm1_reply},
+                {
+                    "role": "user",
+                    "content": (
+                        f"[AGENT RESULT]\n{agent_result}\n\n"
+                        "Summarise what was done in a short, friendly WhatsApp reply."
+                    ),
+                },
+            ]
+            reply_text = await LLMService.chat(messages=final_messages)
+        except Exception:
+            log.exception("LLM1 final reply failed for %s", from_number)
+            # Fall back to raw agent result rather than leaving user hanging
+            reply_text = agent_result
+    else:
+        reply_text = llm1_reply
+
+    # ── 6. SAVE HISTORY + FETCH OWNER (parallel) ─────────────────────────────
     _, owner = await asyncio.gather(
         save_history(from_number, history, body, reply_text),
         get_owner_cached(),
     )
 
-    # ── 6. SAVE OUTBOUND + SEND ───────────────────────────────────────────────
+    # ── 7. SAVE OUTBOUND + SEND ───────────────────────────────────────────────
     outbound_msg = await save_outbound_message(
         conversation_id=conversation.id,
         reply_text=reply_text,

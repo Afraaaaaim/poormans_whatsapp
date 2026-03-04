@@ -95,3 +95,21 @@ services:
         condition: service_healthy
     # ── CRITICAL: never run more than one Beat container ──
     # Scale celery_worker freely, never celery_beat.
+
+  mcp-server:
+    build: .
+    restart: unless-stopped
+    command: uv run python -m mcpserver.mcp_server
+    ports:
+      - "8090:8090"
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8090"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy

@@ -98,17 +98,10 @@ except Exception as e:
     sys.exit(1)
 
 
-# Remove on_event — it fires on every message and we don't need it
-@wa.on_event
-async def on_event(message):
-    pass  # intentionally empty — status updates handled below
 
-
-# Intercept the library's app with middleware
 @wa.app.middleware("http")
 async def intercept_status_updates(request: Request, call_next):
     if request.method == "POST":
-        # Read body once, stash it so the original route can still read it
         body = await request.body()
         try:
             data = _json.loads(body)
@@ -128,9 +121,8 @@ async def intercept_status_updates(request: Request, call_next):
                         if not waba_message_id or not status_value:
                             continue
 
-                        # Dedup status updates too — key includes status so sent/delivered/read all register
                         dedup_key = f"{waba_message_id}:{status_value}"
-                        if await RedisService.is_duplicate_message(dedup_key, ttl=3600):
+                        if await RedisService.is_duplicate_message(dedup_key):
                             logger.debug(
                                 "Duplicate status %s:%s — discarding",
                                 waba_message_id,
@@ -138,18 +130,19 @@ async def intercept_status_updates(request: Request, call_next):
                             )
                             continue
 
-                        logger.debug(
-                            "Status update: %s → %s", waba_message_id, status_value
-                        )
+                        logger.debug("Status update: %s → %s", waba_message_id, status_value)
                         await handle_status_update(waba_message_id, status_value)
-                    return JSONResponse({"success": True})
+
+                    return JSONResponse({"success": True})  # ✅ same as before
+
         except Exception:
             logger.exception("intercept_status_updates: failed to parse body")
+            return JSONResponse({"success": True})  # ✅ always ACK even on error
+            # Meta doesn't need to know about our internal failures
 
-        # Reconstruct the request with the body we already consumed
+        # Reconstruct for non-status webhooks (message inbound etc.)
         async def receive():
             return {"type": "http.request", "body": body}
-
         request._receive = receive
 
     return await call_next(request)

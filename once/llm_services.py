@@ -73,8 +73,8 @@ _groq = AsyncOpenAI(
 _openrouter = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1",
-    timeout=5,
-    max_retries=0,
+    timeout=20,
+    max_retries=1,
 )
 
 # ── Provider rotation state ───────────────────────────────────────────────────
@@ -158,9 +158,9 @@ class LLMService:
     """
 
     @staticmethod
-    async def chat(messages: list[dict]) -> str:
+    async def chat(messages: list[dict], system_prompt: str | None = None) -> str:
         with new_span("llm.chat"):
-            full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+            full_messages = [{"role": "system", "content": system_prompt or SYSTEM_PROMPT}] + messages
             started = datetime.now()
 
             while True:
