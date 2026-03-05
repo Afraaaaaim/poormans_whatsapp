@@ -20,7 +20,7 @@ import os
 import re
 from once.llm_services import LLMService
 from once.logger import get_logger, new_span
-from once.messages import REJECTION_MESSAGES,SYSTEM_PROMPT_WITH_HANDOFF,FINAL_SYSTEMP_PROMPT
+from once.constants import REJECTION_MESSAGES,SYSTEM_PROMPT_WITH_HANDOFF,FINAL_SYSTEMP_PROMPT
 from once.helper_functions import (
     handle_status_update_cached,
     resolve_sender,

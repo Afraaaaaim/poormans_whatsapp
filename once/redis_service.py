@@ -17,7 +17,7 @@ import os
 import redis.asyncio as aioredis
 
 from once.logger import get_logger, new_span
-from once.messages import HISTORY_NS, CACHE_NS
+from once.constants import HISTORY_NS, CACHE_NS
 log = get_logger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL")

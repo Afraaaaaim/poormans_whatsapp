@@ -39,7 +39,7 @@ from cerebras.cloud.sdk import RateLimitError as CerebrasRateLimitError
 from openai import APIError, AsyncOpenAI
 
 from once.logger import get_logger, new_span
-from once.messages import SYSTEM_PROMPT,PROVIDERS
+from once.constants import SYSTEM_PROMPT,PROVIDERS
 log = get_logger(__name__)
 
 # ── ENV ───────────────────────────────────────────────────────────────────────

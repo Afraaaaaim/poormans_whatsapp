@@ -31,7 +31,7 @@ from crewai_tools import MCPServerAdapter
 
 from once.logger import get_logger, new_span
 from once.helper_functions import send_whatsapp_reply
-from once.messages import THINKING_PHRASES, AGENT_ROLE, AGENT_GOAL, AGENT_BACKSTORY
+from once.constants import THINKING_PHRASES, AGENT_ROLE, AGENT_GOAL, AGENT_BACKSTORY
 
 log = get_logger(__name__)
 
