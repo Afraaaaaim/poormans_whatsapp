@@ -39,7 +39,7 @@ async def _flush_all():
     import os
     import redis.asyncio as aioredis
     from once.db_services import DBService
-    client = aioredis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
+    client = aioredis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
     import asyncio
     await asyncio.gather(
         _flush_inbound(client, DBService),

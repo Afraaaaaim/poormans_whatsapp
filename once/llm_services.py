@@ -39,55 +39,62 @@ from cerebras.cloud.sdk import RateLimitError as CerebrasRateLimitError
 from openai import APIError, AsyncOpenAI
 
 from once.logger import get_logger, new_span
-
+from once.messages import SYSTEM_PROMPT,PROVIDERS
 log = get_logger(__name__)
 
 # ── ENV ───────────────────────────────────────────────────────────────────────
-CEREBRAS_API_KEY  = os.getenv("CEREBRAS_API_KEY", "")
-CEREBRAS_MODEL    = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
-GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL        = os.getenv("GROQ_MODEL", "llama3-8b-8192")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+CEREBRAS_API_KEY  = os.getenv("CEREBRAS_API_KEY")
+CEREBRAS_MODEL    = os.getenv("CEREBRAS_MODEL")
+CEREBRAS_TIMEOUT_SECONDS = int(os.getenv("CEREBRAS_TIMEOUT_SECONDS"))
+CEREBRAS_MAX_RETRIES = int(os.getenv("CEREBRAS_MAX_RETRIES"))
 
-SYSTEM_PROMPT = os.getenv(
-    "SYSTEM_PROMPT",
-    "You are a personal assistant. Be concise — replies go over WhatsApp.",
-)
+GROQ_BASE_URL     = os.getenv("GROQ_BASE_URL")
+GROQ_API_KEY      = os.getenv("GROQ_API_KEY")
+GROQ_MODEL        = os.getenv("GROQ_MODEL")
+GROQ_TIMEOUT_SECONDS = int(os.getenv("GROQ_TIMEOUT_SECONDS"))
+GROQ_MAX_RETRIES = int(os.getenv("GROQ_MAX_RETRIES"))
+
+OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL")
+OPENROUTER_TIMEOUT_SECONDS = int(os.getenv("OPENROUTER_TIMEOUT_SECONDS"))
+OPENROUTER_MAX_RETRIES = int(os.getenv("OPENROUTER_MAX_RETRIES"))
+
+MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS"))
+TEMPERATURE = float(os.getenv("TEMPERATURE"))
 
 # ── Clients — created once at import time ─────────────────────────────────────
 _cerebras = AsyncCerebras(
     api_key=CEREBRAS_API_KEY,
-    timeout=5,
-    max_retries=0,  # we handle retries via rotation, not per-client
+    timeout=CEREBRAS_TIMEOUT_SECONDS,
+    max_retries=CEREBRAS_MAX_RETRIES,
     warm_tcp_connection=True,
 )
 
 _groq = AsyncOpenAI(
     api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1",
-    timeout=5,
-    max_retries=0,
+    base_url=GROQ_BASE_URL,
+    timeout=GROQ_TIMEOUT_SECONDS,
+    max_retries=GROQ_MAX_RETRIES,
 )
 
 _openrouter = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1",
-    timeout=20,
-    max_retries=1,
+    base_url=OPENROUTER_BASE_URL,
+    timeout=OPENROUTER_TIMEOUT_SECONDS,
+    max_retries=OPENROUTER_MAX_RETRIES,
 )
 
 # ── Provider rotation state ───────────────────────────────────────────────────
-# Index into _PROVIDERS. Starts at 0 (Cerebras). Rotates forward on exhaustion.
+# Index into PROVIDERS. Starts at 0 (Cerebras). Rotates forward on exhaustion.
 # Uses a lock so concurrent async requests don't race on the index.
 
-_PROVIDERS = ["cerebras", "groq", "openrouter"]
 _current_provider_index = 0
 _provider_lock = asyncio.Lock()
 
 
 async def _get_provider() -> str:
-    return _PROVIDERS[_current_provider_index]
+    return PROVIDERS[_current_provider_index]
 
 
 async def _rotate_provider(failed_provider: str) -> str | None:
@@ -97,15 +104,15 @@ async def _rotate_provider(failed_provider: str) -> str | None:
     """
     global _current_provider_index
     async with _provider_lock:
-        current = _PROVIDERS[_current_provider_index]
+        current = PROVIDERS[_current_provider_index]
         # Only rotate if the failed provider is still the active one
         # (another coroutine may have already rotated)
         if current == failed_provider:
             _current_provider_index += 1
-            if _current_provider_index >= len(_PROVIDERS):
+            if _current_provider_index >= len(PROVIDERS):
                 log.error("All LLM providers exhausted")
                 _current_provider_index= 0
-            new = _PROVIDERS[_current_provider_index]
+            new = PROVIDERS[_current_provider_index]
             log.warning("Rotated LLM provider: %s → %s", failed_provider, new)
             return new
         return current  # already rotated by another coroutine
@@ -117,8 +124,8 @@ async def _call_cerebras(messages: list[dict]) -> str:
     completion = await _cerebras.chat.completions.create(
         model=CEREBRAS_MODEL,
         messages=messages,
-        max_completion_tokens=1000,
-        temperature=0.7,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        temperature=TEMPERATURE,
         stream=False,
     )
     return completion.choices[0].message.content
@@ -129,8 +136,8 @@ async def _call_openai_compat(client: AsyncOpenAI, model: str, messages: list[di
         model=model,
         messages=messages,
         stream=True,
-        max_completion_tokens=1000,
-        temperature=0.7,
+        max_completion_tokens=MAX_COMPLETION_TOKENS,
+        temperature=TEMPERATURE,
     )
     if is_openrouter:
         kwargs["extra_body"] = {"provider": {"sort": "throughput"}}

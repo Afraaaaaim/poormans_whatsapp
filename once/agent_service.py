@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 from typing import Any
 
 from crewai import Agent, Crew, Task, Process
@@ -30,28 +31,15 @@ from crewai_tools import MCPServerAdapter
 
 from once.logger import get_logger, new_span
 from once.helper_functions import send_whatsapp_reply
+from once.messages import THINKING_PHRASES, AGENT_ROLE, AGENT_GOAL, AGENT_BACKSTORY
 
 log = get_logger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-AGENT_MODEL    = os.getenv("AGENT_MODEL", "deepseek/deepseek-chat")
-MCP_SERVER_URL = os.getenv("MCP_BASE_URL", "http://mcp-server:8090/sse")
-MAX_TURNS      = int(os.getenv("AGENT_MAX_TURNS", "10"))
-
-AGENT_ROLE      = "Task Execution Agent"
-AGENT_GOAL      = "Complete the requested task accurately using available tools."
-AGENT_BACKSTORY = (
-    "You are a precise task-execution agent for a WhatsApp assistant. "
-    "You MUST call a tool for every task -- never reason about or guess the outcome. "
-    "If the task involves a user (activate, deactivate, add, remove, search), "
-    "call the appropriate tool immediately with whatever information you have. "
-    "A name alone is sufficient to identify a user -- do NOT ask for a phone number "
-    "before calling the tool. The tool handles user lookup internally. "
-    "Always pass caller_role when a tool requires it. "
-    "Never fabricate a result. If you did not call a tool, you do not have a result. "
-    "Be concise -- act and return the tool result directly."
-)
+AGENT_MODEL    = os.getenv("AGENT_MODEL")
+MCP_SERVER_URL = os.getenv("MCP_BASE_URL")
+MAX_TURNS      = int(os.getenv("AGENT_MAX_TURNS"))
 
 # ── Raw OpenAI-compatible client pointing at OpenRouter ──────────────────────
 # Bypasses CrewAI's LLM() wrapper entirely — no LiteLLM dependency needed.
@@ -145,7 +133,7 @@ async def agent_run(
             reason, caller_role, user_phone,
         )
 
-        await _wa_update(wa, user_phone, "🔍 On it! Let me figure out the right move...")
+        await _wa_update(wa, user_phone, random.choice(THINKING_PHRASES))
 
         task_description = (
             f"Task: {reason}\n\n"
@@ -164,7 +152,6 @@ async def agent_run(
                 "Agent finished | output_len=%d | preview=%s",
                 len(final), final[:100],
             )
-            await _wa_update(wa, user_phone, "✅ Done! Here's what happened...")
             print("#####################################")
             print(str(final))
             print("#####################################")
@@ -173,5 +160,5 @@ async def agent_run(
 
         except Exception as exc:
             log.exception("Agent loop failed | reason=%s | error=%s", reason, exc)
-            await _wa_update(wa, user_phone, "⚠️ Hit a snag, but handled it.")
+            await _wa_update(wa, user_phone, "Unfortunately, Things didn't go as planned. \nMaybe try again? \nMaybe Later.")
             return f"Agent encountered an error: {exc}"

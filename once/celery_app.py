@@ -21,10 +21,11 @@ import os
 from celery import Celery
 from celery.schedules import crontab
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-LOG_ROTATE_TZ = os.getenv("LOG_ROTATE_TZ", "Asia/Kolkata")
-LOG_ROTATE_HOUR = int(os.getenv("LOG_ROTATE_HOUR", "0"))
-LOG_ROTATE_MIN = int(os.getenv("LOG_ROTATE_MIN", "1"))
+REDIS_URL = os.getenv("REDIS_URL")
+LOG_ROTATE_TZ = os.getenv("LOG_ROTATE_TZ")
+LOG_ROTATE_HOUR = int(os.getenv("LOG_ROTATE_HOUR"))
+LOG_ROTATE_MIN = int(os.getenv("LOG_ROTATE_MIN"))
+FLUSH_TO_DB = int(os.getenv("FLUSH_TO_DB")) 
 
 celery_app = Celery(
     "poormans_whatsapp",
@@ -54,7 +55,7 @@ celery_app.conf.update(
         },
         "flush-db-queue": {
             "task": "once.tasks.flush_db_queue",
-            "schedule": 30.0,  # every 30 seconds
+            "schedule": FLUSH_TO_DB,  # every 30 seconds
             "options": {"expires": 25},
         },
     },

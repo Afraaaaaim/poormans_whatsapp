@@ -18,9 +18,9 @@ Flow:
 import asyncio
 import os
 import re
-from once.llm_services import LLMService, SYSTEM_PROMPT
+from once.llm_services import LLMService
 from once.logger import get_logger, new_span
-from once.messages import REJECTION_MESSAGES
+from once.messages import REJECTION_MESSAGES,SYSTEM_PROMPT_WITH_HANDOFF,FINAL_SYSTEMP_PROMPT
 from once.helper_functions import (
     handle_status_update_cached,
     resolve_sender,
@@ -38,25 +38,6 @@ log = get_logger(__name__)
 
 # ── LLM1 system prompt (no ##AGENT## signal needed anymore) ──────────────────
 
-SYSTEM_PROMPT_WITH_HANDOFF = SYSTEM_PROMPT + (
-    "\n\n"
-    "CRITICAL ROUTING RULE:\n"
-    "If the user's request requires any action (adding/removing/deactivating users, "
-    "lookups, any data change), reply ONLY with:\n"
-    "ACTION: <one-line description>\n\n"
-    "Examples:\n"
-    "User: add john with number 9123456789 as guest\n"
-    "You: ACTION: Add user with phone 9123456789, name John, role guest\n\n"
-    "User: remove afraim\n"
-    "You: ACTION: Deactivate user with name Afraim\n\n"
-    "User: who is signed up?\n"
-    "You: ACTION: List all users\n\n"
-    "Rules:\n"
-    "- Do NOT ask for more info before emitting ACTION — the agent will handle missing details.\n"
-    "- Do NOT add any text before or after the ACTION line.\n"
-    "- Only reply normally for pure conversation (greetings, questions about features, etc)."
-)
-FINAL_SYSTEMP_PROMPT = "This will be the final message going to the user, construct it properly in a meaninfulway, dont repeat stuff. keep it minimal and format is accordingly, this is going as a whatsapp message"
 # Matches:  ACTION: <reason>
 _ACTION_RE = re.compile(r"^ACTION:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 

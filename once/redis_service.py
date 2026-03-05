@@ -17,26 +17,23 @@ import os
 import redis.asyncio as aioredis
 
 from once.logger import get_logger, new_span
-
+from once.messages import HISTORY_NS, CACHE_NS
 log = get_logger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-HISTORY_MAX_PAIRS = int(os.getenv("HISTORY_MAX_PAIRS", "10"))
-HISTORY_TTL = int(os.getenv("HISTORY_TTL_SECONDS", "86400"))
-CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "300"))
-
-_HISTORY_NS = "chat_history"
-_CACHE_NS = "cache"
-
+REDIS_URL = os.getenv("REDIS_URL")
+HISTORY_MAX_PAIRS = int(os.getenv("HISTORY_MAX_PAIRS"))
+HISTORY_TTL = int(os.getenv("HISTORY_TTL_SECONDS"))
+CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS"))
+DEDUP_TTL = int(os.getenv("DEDUP_TTL_SECONDS"))  # 8 days in seconds, longer than WhatsApp's 7-day dedup window
 _local_dedup: set[str] = set()
 
 
 def _history_key(phone: str) -> str:
-    return f"{_HISTORY_NS}:{phone}"
+    return f"{HISTORY_NS}:{phone}"
 
 
 def _cache_key(key: str) -> str:
-    return f"{_CACHE_NS}:{key}"
+    return f"{CACHE_NS}:{key}"
 
 
 _client: aioredis.Redis = aioredis.from_url(REDIS_URL, decode_responses=True)
@@ -123,7 +120,7 @@ class RedisService:
     # ── DEDUP ─────────────────────────────────────────────────────────────────
 
     @staticmethod
-    async def is_duplicate_message(waba_message_id: str, ttl: int = 691200) -> bool:
+    async def is_duplicate_message(waba_message_id: str, ttl: int = DEDUP_TTL) -> bool:
         key = f"dedup:{waba_message_id}"
         try:
             is_new = await _client.set(key, "1", ex=ttl, nx=True)
