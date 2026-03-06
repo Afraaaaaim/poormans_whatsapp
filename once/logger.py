@@ -83,6 +83,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from opentelemetry import trace as _otel_trace
 
 # ──────────────────────────────────────────────
 # Context variables  (per-coroutine / per-thread)
@@ -97,15 +98,21 @@ def set_request_context(
     request_id: str | None = None,
     trace_id: str | None = None,
 ) -> dict:
-    """
-    Call once at the top of every new incoming request / WhatsApp message.
-    All log lines fired anywhere during that request will share these IDs.
-    """
     rid = request_id or str(uuid.uuid4())
-    tid = trace_id or str(uuid.uuid4())
+
+    # Use active OTEL span if one exists
+    span = _otel_trace.get_current_span()
+    ctx = span.get_span_context()
+    if ctx and ctx.is_valid:
+        tid = trace_id or format(ctx.trace_id, "032x")
+        sid = format(ctx.span_id, "016x")
+    else:
+        tid = trace_id or str(uuid.uuid4())
+        sid = "-"
+
     _request_id.set(rid)
     _trace_id.set(tid)
-    _span_id.set("-")
+    _span_id.set(sid)
     _span_name.set("-")
     return {"request_id": rid, "trace_id": tid}
 
@@ -120,23 +127,26 @@ def clear_request_context() -> None:
 
 @contextmanager
 def new_span(name: str):
-    """
-    Wrap a sub-operation with its own span ID.
-    Restores the previous span when the block exits.
-
-        with new_span("db_write"):
-            log.info("Saving to DB")
-    """
-    span_id = str(uuid.uuid4())[:8]
+    tracer = _otel_trace.get_tracer("once.logger")
     prev_span = _span_id.get()
     prev_name = _span_name.get()
-    _span_id.set(span_id)
-    _span_name.set(name)
-    try:
-        yield span_id
-    finally:
-        _span_id.set(prev_span)
-        _span_name.set(prev_name)
+
+    with tracer.start_as_current_span(name) as otel_span:
+        ctx = otel_span.get_span_context()
+        if ctx and ctx.is_valid:
+            new_sid = format(ctx.span_id, "016x")
+            new_tid = format(ctx.trace_id, "032x")
+            _trace_id.set(new_tid)
+        else:
+            new_sid = str(uuid.uuid4())[:8]
+
+        _span_id.set(new_sid)
+        _span_name.set(name)
+        try:
+            yield new_sid
+        finally:
+            _span_id.set(prev_span)
+            _span_name.set(prev_name)
 
 
 # ──────────────────────────────────────────────

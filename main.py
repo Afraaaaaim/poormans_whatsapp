@@ -10,6 +10,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 load_dotenv(".env", override=True)
+from once.otel_setup import setup_otel
+setup_otel()
+
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from whatsapp import AsyncWhatsApp, get_mobile
 
@@ -90,7 +94,7 @@ except Exception as e:
     sys.exit(1)
 
 app = FastAPI()
-
+FastAPIInstrumentor().instrument_app(app)  # ← add this line
 try:
     app.mount(CUSTOM_ENDPOINT, wa.app)
 except Exception as e:
