@@ -34,10 +34,13 @@ jobs:
             git checkout deployment
             git pull origin deployment
 
-            # Build once, all services reuse the same image
-            docker build -t myapp:latest .
+            docker buildx build \
+              --builder mybuilder \
+              --cache-from type=local,src=/tmp/buildcache \
+              --cache-to type=local,dest=/tmp/buildcache,mode=max \
+              --load \
+              -t myapp:latest .
 
             docker compose up -d --pull never --remove-orphans
-
             docker image prune -f
           EOF
