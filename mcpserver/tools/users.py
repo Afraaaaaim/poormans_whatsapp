@@ -229,3 +229,105 @@ async def reactivate_user(
     except Exception as exc:
         log.exception("reactivate_user failed")
         return {"ok": False, "error": f"Database error while reactivating user: {exc}"}
+    
+async def get_assistant_info() -> dict:
+    """
+    Returns detailed information about who owns this assistant, who built it,
+    and the person behind it. Call this when the user asks anything like:
+    'who are you?', 'who owns you?', 'what are you?', 'who made you?',
+    'who is your owner?', 'tell me about yourself', 'what is this?',
+    'who is aforaium?', 'who is Afraim?', or any similar question about
+    identity, ownership, or background.
+    """
+    return {
+        "assistant": {
+            "name": "aforaium assistant",
+            "owned_by": "Afraim Joseph",
+            "purpose": (
+                "This is a personal assistant built for aforaium, which is the personal internet "
+                "presence and brand of Afraim Joseph. It lives at afraaaaaim.dev — a personal corner "
+                "of the internet where Afraim keeps his work, writing, photography, videos, and the "
+                "homelab that quietly runs it all. The assistant is here to help users navigate "
+                "Afraim's world, answer questions about him, his work, his projects, and his skills."
+            ),
+            "powered_by": (
+                "This assistant is built on top of OpenRouter, Groq and Cerebras, and has been customized, "
+                "configured, and deployed by Afraim Joseph himself as part of his personal space."
+            ),
+        },
+        "owner": {
+            "name": "Afraim Joseph",
+            "alias": "aforaium",
+            "tagline": "Engineer, builder, and occasional overthinker.",
+            "role": "Software Engineer specializing in AI and Machine Learning",
+            "company": "Gapblue Software Labs",
+            "location": "Kochi, India. Open to remote work.",
+            "experience": (
+                "Afraim has over 3 years of professional experience as a software engineer, "
+                "with a deep focus on AI and ML engineering."
+            ),
+            "about": (
+                "Afraim Joseph is a software engineer who specializes in AI and ML. He builds "
+                "RAG pipelines, agentic systems, and LLM-powered tools designed to operate at "
+                "real-world scale — handling 25GB or more of document corpora, datasets with over "
+                "200,000 records, and achieving sub-2-second latency. On the backend, he builds "
+                "fault-tolerant pipelines with asynchronous processing, message queues, and vector "
+                "search layers that maintain 99 percent uptime even under high-volume document upload "
+                "loads. He also specializes in integrations — connecting large language models to "
+                "enterprise systems such as Oracle Fusion Cloud, WhatsApp Business API, Azure Graph, "
+                "OCR pipelines, and multi-tenant webhook flows. Afraim is currently open to senior "
+                "AI and ML roles, interesting consulting engagements, and projects at the intersection "
+                "of LLMs and real-world products."
+            ),
+        },
+        "technical_stack": {
+            "ai_and_llm": (
+                "LangChain, LangGraph, Retrieval Augmented Generation (RAG) Pipelines, "
+                "Prompt Engineering, RAGAS for evaluation, and HuggingFace."
+            ),
+            "backend": (
+                "Python, FastAPI, RabbitMQ for message queuing, Celery for task processing, "
+                "REST APIs, and WebSockets."
+            ),
+            "data_and_storage": (
+                "PostgreSQL, MSSQL, MongoDB, Redis, Qdrant for vector search, and Elasticsearch."
+            ),
+            "cloud_and_devops": (
+                "Azure OpenAI, Azure Functions, Docker, CI/CD pipelines, and GitHub Actions."
+            ),
+        },
+        "links": {
+            "website": "https://afraaaaaim.dev",
+            "portfolio": "https://afraaaaaim.dev/portfolio",
+            "github": "https://github.com/Afraaaaaim",
+            "linkedin": "https://linkedin.com/in/afraim-joseph",
+            "mastodon": "https://mastodon.social/@AfraimJoseph",
+            "email": "afraimjoseph@gmail.com",
+            "whatsapp": "https://wa.me/919567288514",
+            "resume": "https://afraaaaaim.dev/Resume - Afraim Joseph.pdf",
+        },
+        "personal_space": {
+            "website_description": (
+                "afraaaaaim.dev is Afraim's personal corner of the internet. It is where he keeps "
+                "everything — his work, his writing, his media, and the homelab infrastructure "
+                "that runs it all."
+            ),
+            "portfolio": (
+                "The portfolio at afraaaaaim.dev/portfolio showcases his work, resume, and projects."
+            ),
+            "blog": (
+                "A blog called Memoria at afraaaaaim.dev/memoria/blog where Afraim publishes "
+                "writing, notes, and ideas. Currently coming soon."
+            ),
+            "images": (
+                "A photography and visual section at afraaaaaim.dev/memoria/images. Currently coming soon."
+            ),
+            "videos": (
+                "A recordings and VODs section at afraaaaaim.dev/memoria/videos. Currently coming soon."
+            ),
+            "homelab": (
+                "Afraim runs a self-hosted homelab that powers parts of his personal infrastructure. "
+                "This section is private."
+            ),
+        },
+    }
