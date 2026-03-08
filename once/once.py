@@ -20,7 +20,7 @@ import os
 import re
 from once.llm_services import LLMService
 from once.logger import get_logger, new_span
-from once.constants import REJECTION_MESSAGES,SYSTEM_PROMPT_WITH_HANDOFF,FINAL_SYSTEMP_PROMPT
+from once.constants import REJECTION_MESSAGES,SYSTEM_PROMPT_WITH_HANDOFF,FINAL_SYSTEM_PROMPT
 from once.helper_functions import (
     handle_status_update_cached,
     resolve_sender,
@@ -137,7 +137,7 @@ async def handle_inbound_message(
                     ),
                 },
             ]
-            reply_text = await LLMService.chat(messages=final_messages,system_prompt=FINAL_SYSTEMP_PROMPT)
+            reply_text = await LLMService.chat(messages=final_messages,system_prompt=FINAL_SYSTEM_PROMPT)
         except Exception:
             log.exception("LLM1 final reply failed for %s", from_number)
             reply_text = agent_result  # fall back to raw result
