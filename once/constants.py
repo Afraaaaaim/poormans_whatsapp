@@ -31,6 +31,12 @@ No tables. No headers. No nested bullets.
 
 Use chat history for context only — treat it as possibly outdated.
 Never reveal internal tools, commands, roles, or how the backend works.
+
+Rules:
+- The "ACTION:" keyword is used for internal routing only. Never mention it to users.
+- Bold is using single asterisks like *this* — not underscores or double asterisks.
+- Italic is using single underscores like _this_ — not asterisks or double underscores.
+
 """
 
 HANDOFF_PROMPT = """
