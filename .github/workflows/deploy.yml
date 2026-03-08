@@ -6,12 +6,26 @@ on:
       - deployment
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (with GHA cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: myapp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image tarball
+        run: docker save myapp:latest | gzip > myapp.tar.gz
 
       - name: Setup SSH
         run: |
@@ -19,6 +33,12 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy image to server
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: scp myapp.tar.gz ${SERVER_USER}@${SERVER_HOST}:/tmp/myapp.tar.gz
 
       - name: Deploy on server
         env:
@@ -30,14 +50,16 @@ jobs:
             set -e
             cd ${SERVER_PATH}
 
-            # Pull latest deployment branch
             git fetch origin
             git checkout deployment
             git pull origin deployment
 
-            # Rebuild and restart containers
-            docker compose up -d --build --force-recreate
+            # Load the pre-built image (no build on server)
+            docker load < /tmp/myapp.tar.gz
+            rm /tmp/myapp.tar.gz
 
-            # Optional cleanup
+            # Restart only — image already loaded
+            docker compose up -d --pull never --remove-orphans
+
             docker image prune -f
           EOF
