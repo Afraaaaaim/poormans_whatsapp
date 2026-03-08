@@ -230,14 +230,14 @@ async def reactivate_user(
         log.exception("reactivate_user failed")
         return {"ok": False, "error": f"Database error while reactivating user: {exc}"}
     
+    
 async def get_assistant_info() -> dict:
     """
-    Returns detailed information about who owns this assistant, who built it,
-    and the person behind it. Call this when the user asks anything like:
-    'who are you?', 'who owns you?', 'what are you?', 'who made you?',
-    'who is your owner?', 'tell me about yourself', 'what is this?',
-    'who is aforaium?', 'who is Afraim?', or any similar question about
-    identity, ownership, or background.
+    Returns information about this assistant — what it is, what it's built on,
+    and its purpose. Call this when the user asks things like:
+    'who are you?', 'what are you?', 'what is this assistant?',
+    'what powers you?', 'tell me about yourself', or any similar question
+    specifically about the assistant's identity or capabilities.
     """
     return {
         "assistant": {
@@ -255,6 +255,43 @@ async def get_assistant_info() -> dict:
                 "configured, and deployed by Afraim Joseph himself as part of his personal space."
             ),
         },
+        "personal_space": {
+            "website_description": (
+                "afraaaaaim.dev is Afraim's personal corner of the internet. It is where he keeps "
+                "everything — his work, his writing, his media, and the homelab infrastructure "
+                "that runs it all."
+            ),
+            "portfolio": (
+                "The portfolio at afraaaaaim.dev/portfolio showcases his work, resume, and projects."
+            ),
+            "blog": (
+                "A blog called Memoria at afraaaaaim.dev/memoria/blog where Afraim publishes "
+                "writing, notes, and ideas. Currently coming soon."
+            ),
+            "images": (
+                "A photography and visual section at afraaaaaim.dev/memoria/images. Currently coming soon."
+            ),
+            "videos": (
+                "A recordings and VODs section at afraaaaaim.dev/memoria/videos. Currently coming soon."
+            ),
+            "homelab": (
+                "Afraim runs a self-hosted homelab that powers parts of his personal infrastructure. "
+                "This section is private."
+            ),
+        },
+    }
+
+
+async def get_owner_info() -> dict:
+    """
+    Returns detailed information about Afraim Joseph — the person behind aforaium.
+    Call this when the user asks things like:
+    'who owns you?', 'who made you?', 'who is your owner?', 'who is aforaium?',
+    'who is Afraim?', 'tell me about Afraim', 'what does Afraim do?',
+    'what are his skills?', 'how do I contact him?', or any similar question
+    about the person, their background, skills, or links.
+    """
+    return {
         "owner": {
             "name": "Afraim Joseph",
             "alias": "aforaium",
@@ -305,29 +342,5 @@ async def get_assistant_info() -> dict:
             "email": "afraimjoseph@gmail.com",
             "whatsapp": "https://wa.me/919567288514",
             "resume": "https://afraaaaaim.dev/Resume - Afraim Joseph.pdf",
-        },
-        "personal_space": {
-            "website_description": (
-                "afraaaaaim.dev is Afraim's personal corner of the internet. It is where he keeps "
-                "everything — his work, his writing, his media, and the homelab infrastructure "
-                "that runs it all."
-            ),
-            "portfolio": (
-                "The portfolio at afraaaaaim.dev/portfolio showcases his work, resume, and projects."
-            ),
-            "blog": (
-                "A blog called Memoria at afraaaaaim.dev/memoria/blog where Afraim publishes "
-                "writing, notes, and ideas. Currently coming soon."
-            ),
-            "images": (
-                "A photography and visual section at afraaaaaim.dev/memoria/images. Currently coming soon."
-            ),
-            "videos": (
-                "A recordings and VODs section at afraaaaaim.dev/memoria/videos. Currently coming soon."
-            ),
-            "homelab": (
-                "Afraim runs a self-hosted homelab that powers parts of his personal infrastructure. "
-                "This section is private."
-            ),
         },
     }

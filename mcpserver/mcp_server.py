@@ -136,6 +136,18 @@ async def get_assistant_info() -> dict:
     """
     return await user_tools.get_assistant_info()
 
+@mcp.tool()
+async def get_owner_info() -> dict:
+    """
+    Returns detailed information about who owns this assistant, who built it,
+    and the person behind it. Call this when the user asks anything like:
+    'who are you?', 'who owns you?', 'what are you?', 'who made you?',
+    'who is your owner?', 'tell me about yourself', 'what is this?',
+    'who is aforaium?', 'who is Afraim?', or any similar question about
+    identity, ownership, or background.
+    """
+    return await user_tools.get_owner_info()
+
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────

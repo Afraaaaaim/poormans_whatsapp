@@ -41,6 +41,43 @@ REGISTRY: dict[str, ToolMeta] = {
         category="users",
         tags=["reactivate", "enable", "restore", "unblock user", "turn on", "activate"],
     ),
+    "get_assistant_info": ToolMeta(
+        description="Returns information about this assistant — its name, purpose, what powers it, and the personal space it lives on.",
+        allowed_roles=["admin", "owner", "user","guest"],
+        category="info",
+        tags=["who are you", "what are you", "about assistant", "what is this", "tell me about yourself", "what powers you"],
+    ),
+    "get_owner_info": ToolMeta(
+        description=(
+            "Returns detailed information about Afraim Joseph — a software engineer with 3+ years of experience "
+            "specializing in AI and ML. Covers his background, skills, tech stack, projects, and contact links. "
+            "Skills include: LangChain, LangGraph, RAG pipelines, prompt engineering, FastAPI, Python, RabbitMQ, "
+            "Celery, PostgreSQL, MongoDB, Redis, Qdrant, Elasticsearch, Azure OpenAI, Docker, CI/CD, GitHub Actions. "
+            "Has built systems handling 25GB+ document corpora, 200k+ record datasets, sub-2s latency, and 99% uptime. "
+            "Integrations include Oracle Fusion Cloud, WhatsApp Business API, Azure Graph, and OCR pipelines. "
+            "Open to senior AI/ML roles and consulting. Located in Kochi, India. Open to remote work."
+        ),
+        allowed_roles=["admin", "owner", "user","guest"],
+        category="info",
+        tags=[
+            # Identity
+            "who owns you", "who made you", "who is aforaium", "who is afraim", "about afraim",
+            # Experience
+            "years of experience", "yoe", "experience", "background", "career", "senior engineer",
+            # Skills & tech
+            "skills", "tech stack", "langchain", "langgraph", "rag", "retrieval augmented generation",
+            "prompt engineering", "fastapi", "python", "rabbitmq", "celery", "postgresql", "mongodb",
+            "redis", "qdrant", "elasticsearch", "vector search", "azure openai", "docker", "ci/cd",
+            "github actions", "huggingface", "ragas", "websockets", "rest api",
+            # Projects & work
+            "projects", "portfolio", "work", "what has he built", "agentic systems", "llm", "ml engineering",
+            "ai engineering", "rag pipeline", "document pipeline", "integrations", "oracle fusion",
+            "whatsapp api", "ocr", "multi-tenant",
+            # Contact & links
+            "contact", "resume", "cv", "github", "linkedin", "email", "whatsapp", "website", "hire",
+            "open to work", "remote", "consulting", "freelance",
+        ],
+    ),
 }
 
 
