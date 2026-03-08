@@ -7,7 +7,6 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.4",
     "asyncpg>=0.31.0",
-    "black>=26.1.0",
     "celery>=5.6.2",
     "cerebras-cloud-sdk>=1.67.0",
     "crewai>=1.6.1",
@@ -15,7 +14,6 @@ dependencies = [
     "fastapi>=0.134.0",
     "fastmcp>=3.1.0",
     "groq>=1.0.0",
-    "isort>=8.0.0",
     "openai>=2.24.0",
     "openai-agents>=0.10.4",
     "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",
@@ -26,7 +24,6 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "rapidfuzz>=3.14.3",
     "redis>=7.2.1",
-    "ruff>=0.15.4",
     "sqlalchemy[asyncio]>=2.0.47",
     "whatsapp-python>=4.3.0",
 ]
@@ -34,4 +31,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "commitizen>=4.13.9",
+    "black>=26.1.0",
+    "isort>=8.0.0",
+    "ruff>=0.15.4",
 ]
