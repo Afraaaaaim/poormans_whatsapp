@@ -363,7 +363,10 @@ class DBService:
             msg = result.scalar_one_or_none()
             if msg:
                 msg.waba_message_id = waba_message_id
+                await session.flush()  # 👈 this was missing
                 log.debug("Patched waba_id=%s onto message id=%s", waba_message_id, message_id)
+            else:
+                log.warning("update_message_waba_id: message id=%s not found", message_id)
 
     @staticmethod
     async def get_or_create_conversation(from_number: str, user_id: uuid.UUID) -> ConversationModel:

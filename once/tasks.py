@@ -2,7 +2,9 @@
 tasks.py — Celery tasks
 """
 import json
+import uuid
 from once.celery_app import celery_app
+from once.db_services import DBService
 from once.logger import archive_logs, get_logger
 
 log = get_logger(__name__)
@@ -124,7 +126,7 @@ async def _flush_waba_patches(client, DBService):
     log.info("flush_db_queue: flushing %d waba patches", len(items))
     for item in items:
         try:
-            await DBService.update_message_waba_id(item["msg_id"], item["waba_message_id"])
+            await DBService.update_message_waba_id(uuid.UUID(item["msg_id"]), item["waba_message_id"])
         except Exception:
             log.exception("flush_db_queue: failed waba patch — requeueing")
             await client.rpush(_Q_WABA, json.dumps(item))
