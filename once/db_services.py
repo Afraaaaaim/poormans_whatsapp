@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from once.db.models import ConversationModel, ConversationParticipantModel, MessageModel, UserModel
 from once.db.session import AsyncSessionLocal
 from once.logger import get_logger, new_span
-from once.utils import normalize_phone
+from once.helper_functions import normalize_phone
 
 log = get_logger(__name__)
 

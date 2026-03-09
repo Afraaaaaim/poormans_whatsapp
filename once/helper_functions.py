@@ -22,7 +22,13 @@ import asyncio
 import json
 import os
 import uuid
+import re
 from datetime import datetime, timezone
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 from once.db_services import DBService
 from once.logger import get_logger, new_span
@@ -388,3 +394,88 @@ async def send_whatsapp_reply(wa, to_number: str, text: str) -> str | None:
         except Exception as e:
             log.exception("Failed to send WA message to %s: %s", to_number, e)
             return None
+        
+
+
+
+# After stripping +, a valid number is:
+#   - 7 to 15 digits only (E.164 range without the +)
+#   - Does NOT start with 0 (that would mean missing/wrong country code)
+_PHONE_RE = re.compile(r"^[1-9]\d{6,14}$")
+
+
+def normalize_phone(phone: str) -> str:
+    """
+    Normalize a phone number to digit-only format with country code.
+
+    Rules:
+        1. Strip whitespace
+        2. Strip leading +
+        3. Reject if empty
+        4. Reject if starts with 0 (no leading zeros — means country code is missing)
+        5. Reject if not 7–15 digits (E.164 range)
+        6. Reject if contains any non-digit characters after stripping +
+
+    Returns the normalized digit-only string, e.g. "919562885142".
+    Raises ValueError with a clear message on any violation.
+
+    Examples:
+        "+919562885142" → "919562885142"
+        "919562885142"  → "919562885142"
+        "+12125551234"  → "12125551234"
+        "0919562885142" → ValueError
+        "+44 7700 900123"→ ValueError (spaces not allowed)
+        "123"           → ValueError (too short)
+    """
+    if not phone:
+        raise ValueError("Phone number cannot be empty.")
+
+    normalized = phone.strip()
+
+    # Strip leading +
+    if normalized.startswith("+"):
+        normalized = normalized[1:]
+
+    # No spaces, dashes, or other separators allowed
+    if not normalized.isdigit():
+        raise ValueError(
+            f"Phone number '{phone}' contains non-digit characters after stripping '+'. "
+            "Remove spaces, dashes, and brackets before storing."
+        )
+
+    # Must not start with 0 — that means the country code is missing
+    if normalized.startswith("0"):
+        raise ValueError(
+            f"Phone number '{phone}' starts with 0 after stripping '+'. "
+            "This usually means the country code is missing (e.g. use '919...' not '09...')."
+        )
+
+    # Length check (E.164 without +: 7–15 digits)
+    if not _PHONE_RE.match(normalized):
+        raise ValueError(
+            f"Phone number '{phone}' is not a valid E.164 number. "
+            f"Expected 7–15 digits starting with country code, got '{normalized}' ({len(normalized)} digits)."
+        )
+
+    log.debug("normalize_phone: '%s' → '%s'", phone, normalized)
+    return normalized
+
+
+
+def setup_otel(service_name: str = "poormans_whatsapp") -> None:
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://homeserver:4317") 
+
+    resource = Resource.create({
+        "service.name": service_name,
+        "service.version": os.getenv("VERSION", "unknown"),
+        "deployment.environment": os.getenv("ENV", "production"),
+    })
+
+    provider = TracerProvider(resource=resource)
+
+    exporter = OTLPSpanExporter(
+        endpoint=endpoint,
+        insecure=True,
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)

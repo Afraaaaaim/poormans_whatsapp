@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from once.db.models import ConversationModel, ConversationParticipantModel, UserModel
 from once.db.session import AsyncSessionLocal
-from once.utils import normalize_phone
+from once.helper_functions import normalize_phone
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 

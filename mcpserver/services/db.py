@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from once.db.models import UserModel
 from once.db.session import AsyncSessionLocal
 from once.db_services import DBService
-from once.utils import normalize_phone
+from once.helper_functions import normalize_phone
 
 
 # ── session helper ────────────────────────────────────────────────────────────

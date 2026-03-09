@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 load_dotenv(".env", override=True)
-from once.otel_setup import setup_otel
+from once.helper_functions import setup_otel
 setup_otel()
 
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -20,7 +20,7 @@ from whatsapp import AsyncWhatsApp, get_mobile
 from once.logger import get_logger, set_request_context
 from once.once import handle_inbound_message, handle_status_update
 from once.redis_service import RedisService
-from once.utils import normalize_phone
+from once.helper_functions import normalize_phone
 
 # =========================
 # Load Environment
