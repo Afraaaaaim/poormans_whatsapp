@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from once.db.models import ConversationModel, ConversationParticipantModel, MessageModel, UserModel
 from once.db.session import AsyncSessionLocal
 from once.logger import get_logger, new_span
-from once.helper_functions import normalize_phone
 
 log = get_logger(__name__)
 
@@ -64,6 +63,7 @@ class DBService:
     async def get_user_by_phone(phone: str) -> UserModel | None:
         """Look up an active user by phone. Accepts + prefix or plain digits."""
         with new_span("db.get_user_by_phone"):
+            from once.helper_functions import normalize_phone
             normalized = normalize_phone(phone)
             log.debug("Looking up user by phone: %s", normalized)
             async with _session() as session:
@@ -88,6 +88,7 @@ class DBService:
         """
         with new_span("db.is_authorized"):
             try:
+                from once.helper_functions import normalize_phone
                 normalized = normalize_phone(phone)
             except ValueError:
                 log.warning("is_authorized: invalid phone format '%s' — denying", phone)
@@ -375,6 +376,7 @@ class DBService:
         Also creates a ConversationParticipantModel row on first creation.
         """
         with new_span("db.get_or_create_conversation"):
+            from once.helper_functions import normalize_phone
             normalized = normalize_phone(from_number)
             async with _session() as session:
                 # Try to find existing conversation for this phone
